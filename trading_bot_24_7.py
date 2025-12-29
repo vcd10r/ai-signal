@@ -996,7 +996,7 @@ class InstitutionalTradingBot:
             self.positions[symbol] = {
                 "side": side,
                 "entry_price": filled_price,
-                "amount": amount,
+                "amount": float(amount),
                 "stop_loss": signal["stop_loss"],
                 "take_profit": signal["take_profit"],
                 "opened_at": datetime.now(),
@@ -1075,7 +1075,7 @@ class InstitutionalTradingBot:
         """Close position with LIMIT order and save to database"""
         try:
             pos = self.positions[symbol]
-            amount = pos["amount"]
+            amount = float(pos["amount"])
             side = pos["side"]
 
             logger.info(f"[CLOSING] {side} {symbol} - {reason}")
@@ -1224,7 +1224,7 @@ class InstitutionalTradingBot:
                             ) * 100
 
                         # Calculate dollar P&L
-                        position_value = pos["amount"] * pos["entry_price"]
+                        position_value = float(pos["amount"]) * float(pos["entry_price"])
                         pnl_dollar = position_value * (pnl_pct / 100)
 
                         logger.info(
@@ -1370,7 +1370,8 @@ def select_risk_per_trade():
     print("  • Conservative: 1-2% (Aman, growth lambat)")
     print("  • Moderate: 2-3% (Balanced)")
     print("  • Aggressive: 3-5% (High risk, high reward) ⚠️")
-    print("  • Very Aggressive: >5% (Sangat berisiko!) ⚠️⚠️")
+    print("  • Very Aggressive: 5-10% (Sangat berisiko!) ⚠️⚠️")
+    print("  • EXTREME: >10% (BAHAYA! Bisa habis cepat!) ⚠️⚠️⚠️")
 
     while True:
         try:
@@ -1382,8 +1383,8 @@ def select_risk_per_trade():
             else:
                 risk_pct = float(risk_input)
 
-            if risk_pct <= 0 or risk_pct > 20:
-                print("❌ Risk harus antara 0.1% - 20%. Silakan coba lagi.")
+            if risk_pct <= 0 or risk_pct > 50:
+                print("❌ Risk harus antara 0.1% - 50%. Silakan coba lagi.")
                 continue
 
             print(f"\n✅ Risk per trade: {risk_pct}%")

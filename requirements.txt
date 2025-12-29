@@ -1,34 +1,38 @@
-# AI Signal Trading Server - FastAPI Production
+# AI Trading Bot - Production Dependencies
 
-# Web Framework
-fastapi==0.109.0
-uvicorn[standard]==0.27.0
-python-multipart==0.0.6
+# Exchange API
+ccxt>=4.0.0
 
-# Background Tasks
-APScheduler==3.10.4
-
-# Data & Math
+# Data Processing & Analysis
 numpy>=1.21.0
 pandas>=1.3.0
 scipy>=1.7.0
-
-# Technical Indicators
-ta>=0.11.0
 
 # Machine Learning
 scikit-learn>=1.0.0
 lightgbm>=3.3.0
 joblib>=1.1.0
 
-# Exchange API
-ccxt>=1.77.0
+# Technical Indicators
+ta>=0.11.0
 
-# Utilities
-python-dotenv==1.0.0
-pydantic==2.5.3
-pydantic-settings==2.1.0
-requests>=2.27.0
+# Configuration
+python-dotenv>=1.0.0
 
-# Visualization (optional)
+# Optional (for visualization/analysis)
 matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# System utilities (already in Python standard library, no install needed)
+# - os
+# - sys
+# - time
+# - logging
+# - datetime
+# - pathlib
+# - json
+# - pickle
+# - sqlite3
+# - csv
+# - warnings
+# - traceback

@@ -1,6 +1,7 @@
 # API Keys & Secrets
 api_config.txt
 config.py
+.env
 
 # Database
 trades.db

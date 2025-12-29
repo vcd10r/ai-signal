@@ -1046,22 +1046,45 @@ class InstitutionalTradingBot:
 
     def check_positions(self):
         """Monitor open positions and update trailing stops"""
-        # Safety Layer 1: Sync with Binance positions (detect manual closes)
+        # Safety Layer 1: Full sync with Binance positions
         try:
             binance_positions = self.exchange.fetch_positions()
-            active_symbols = {
-                p["symbol"]
+            active_positions = {
+                p["symbol"]: p
                 for p in binance_positions
                 if float(p.get("contracts", 0)) > 0
             }
 
-            # Remove positions that were closed manually
+            # Remove positions that were closed externally
             for symbol in list(self.positions.keys()):
-                if symbol not in active_symbols:
+                if symbol not in active_positions:
                     logger.warning(
                         f"[SYNC] Position {symbol} closed externally. Removing from tracking."
                     )
                     del self.positions[symbol]
+            
+            # Add positions that exist on Binance but not in bot tracking
+            for symbol, binance_pos in active_positions.items():
+                if symbol not in self.positions:
+                    contracts = float(binance_pos.get("contracts", 0))
+                    entry_price = float(binance_pos.get("entryPrice", 0))
+                    side = "LONG" if contracts > 0 else "SHORT"
+                    
+                    logger.warning(f"[SYNC] Found untracked position: {side} {symbol}")
+                    logger.warning(f"       Entry: ${entry_price:.2f}, Amount: {abs(contracts)}")
+                    
+                    # Add to tracking with default TP/SL
+                    self.positions[symbol] = {
+                        "side": side,
+                        "entry_price": entry_price,
+                        "amount": abs(contracts),
+                        "stop_loss": entry_price * (0.98 if side == "LONG" else 1.02),
+                        "take_profit": entry_price * (1.04 if side == "LONG" else 0.96),
+                        "opened_at": datetime.now(),
+                        "confidence": 0.0,  # Unknown confidence
+                    }
+                    logger.info(f"[SYNC] Added {symbol} to tracking with default TP/SL")
+                    
         except Exception as e:
             logger.error(f"[ERROR] Position sync failed: {e}")
 

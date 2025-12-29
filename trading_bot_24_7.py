@@ -293,6 +293,25 @@ class InstitutionalTradingBot:
                 else calculated_position_size
             )
 
+            # SAFETY CHECK: Validate margin doesn't exceed portfolio
+            margin_pct = (margin_required / total_usdc) * 100
+            if margin_pct > 95:
+                logger.error(
+                    f"\n⚠️ [MARGIN ERROR] Margin required ${margin_required:,.2f} ({margin_pct:.1f}%) exceeds portfolio ${total_usdc:,.2f}!"
+                )
+                logger.error(f"   This will cause 'Insufficient Margin' error!")
+                logger.error(f"   Solutions:")
+                logger.error(f"   1. Increase leverage (current: {self.leverage}x)")
+                logger.error(f"   2. Reduce risk per trade (current: {risk_pct}%)")
+                logger.error(f"   3. Add more capital")
+                # Adjust position size to use max 90% of portfolio
+                max_margin = total_usdc * 0.90
+                calculated_position_size = max_margin * self.leverage
+                margin_required = max_margin
+                logger.warning(
+                    f"   Auto-adjusted position to ${calculated_position_size:,.2f} (margin: ${margin_required:,.2f}, {margin_required/total_usdc*100:.1f}%)"
+                )
+
             # Calculate ROI
             if self.initial_balance > 0:
                 roi_pct = (
@@ -959,6 +978,20 @@ class InstitutionalTradingBot:
 
             # Margin needed (position / leverage)
             margin_needed = position_size / self.leverage
+
+            # SAFETY CHECK: Validate sufficient margin before opening position
+            free_balance = balance["USDC"]["free"]
+            margin_with_buffer = margin_needed * 1.05  # 5% buffer for fees/slippage
+
+            if margin_with_buffer > free_balance:
+                logger.error(f"\n[INSUFFICIENT MARGIN] Cannot open position!")
+                logger.error(f"  Required: ${margin_with_buffer:,.2f} (with 5% buffer)")
+                logger.error(f"  Available: ${free_balance:,.2f}")
+                logger.error(f"  Shortfall: ${margin_with_buffer - free_balance:,.2f}")
+                logger.error(
+                    f"  Solutions: Reduce risk, increase leverage, or add capital"
+                )
+                return False
 
             # Convert to amount in coins
             amount = position_size / price

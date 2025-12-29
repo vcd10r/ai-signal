@@ -19,7 +19,9 @@ def load_config():
             if line and not line.startswith('#'):
                 if '=' in line:
                     key, value = line.split('=', 1)
-                    config[key.strip()] = value.strip()
+                    # Remove inline comments (everything after #)
+                    value = value.split('#')[0].strip()
+                    config[key.strip()] = value
     
     # Convert types
     config['MIN_CONFIDENCE'] = float(config.get('MIN_CONFIDENCE', 0.40))

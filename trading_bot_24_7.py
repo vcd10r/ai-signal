@@ -1062,17 +1062,19 @@ class InstitutionalTradingBot:
                         f"[SYNC] Position {symbol} closed externally. Removing from tracking."
                     )
                     del self.positions[symbol]
-            
+
             # Add positions that exist on Binance but not in bot tracking
             for symbol, binance_pos in active_positions.items():
                 if symbol not in self.positions:
                     contracts = float(binance_pos.get("contracts", 0))
                     entry_price = float(binance_pos.get("entryPrice", 0))
                     side = "LONG" if contracts > 0 else "SHORT"
-                    
+
                     logger.warning(f"[SYNC] Found untracked position: {side} {symbol}")
-                    logger.warning(f"       Entry: ${entry_price:.2f}, Amount: {abs(contracts)}")
-                    
+                    logger.warning(
+                        f"       Entry: ${entry_price:.2f}, Amount: {abs(contracts)}"
+                    )
+
                     # Add to tracking with default TP/SL
                     self.positions[symbol] = {
                         "side": side,
@@ -1084,7 +1086,7 @@ class InstitutionalTradingBot:
                         "confidence": 0.0,  # Unknown confidence
                     }
                     logger.info(f"[SYNC] Added {symbol} to tracking with default TP/SL")
-                    
+
         except Exception as e:
             logger.error(f"[ERROR] Position sync failed: {e}")
 

@@ -1013,6 +1013,25 @@ class InstitutionalTradingBot:
 
     def check_positions(self):
         """Monitor open positions and update trailing stops"""
+        # Safety Layer 1: Sync with Binance positions (detect manual closes)
+        try:
+            binance_positions = self.exchange.fetch_positions()
+            active_symbols = {
+                p["symbol"]
+                for p in binance_positions
+                if float(p.get("contracts", 0)) > 0
+            }
+
+            # Remove positions that were closed manually
+            for symbol in list(self.positions.keys()):
+                if symbol not in active_symbols:
+                    logger.warning(
+                        f"[SYNC] Position {symbol} closed externally. Removing from tracking."
+                    )
+                    del self.positions[symbol]
+        except Exception as e:
+            logger.error(f"[ERROR] Position sync failed: {e}")
+
         for symbol, pos in list(self.positions.items()):
             try:
                 ticker = self.exchange.fetch_ticker(symbol)
@@ -1074,17 +1093,58 @@ class InstitutionalTradingBot:
     def close_position(self, symbol, price, reason):
         """Close position with LIMIT order and save to database"""
         try:
+            # Safety Layer 2: Validate position exists in memory
+            if symbol not in self.positions:
+                logger.warning(f"[SKIP] Position {symbol} not found in tracking")
+                return
+
             pos = self.positions[symbol]
             amount = float(pos["amount"])
             side = pos["side"]
 
+            # Safety Layer 3: Check if position still exists on Binance
+            try:
+                binance_positions = self.exchange.fetch_positions([symbol])
+                position_exists = any(
+                    float(p.get("contracts", 0)) > 0
+                    for p in binance_positions
+                    if p["symbol"] == symbol
+                )
+
+                if not position_exists:
+                    logger.warning(
+                        f"[SKIP] {symbol} already closed on exchange. Removing from tracking."
+                    )
+                    del self.positions[symbol]
+                    return
+            except Exception as e:
+                logger.warning(
+                    f"[WARNING] Could not verify position on exchange: {e}. Proceeding..."
+                )
+
             logger.info(f"[CLOSING] {side} {symbol} - {reason}")
 
-            # Close position with MARKET order for instant execution
-            if side == "LONG":
-                order = self.exchange.create_market_sell_order(symbol, amount)
-            else:  # SHORT
-                order = self.exchange.create_market_buy_order(symbol, amount)
+            # Safety Layer 4: Try close with error handling
+            try:
+                if side == "LONG":
+                    order = self.exchange.create_market_sell_order(symbol, amount)
+                else:  # SHORT
+                    order = self.exchange.create_market_buy_order(symbol, amount)
+            except Exception as order_error:
+                # Handle insufficient balance / position not found errors
+                error_msg = str(order_error).lower()
+                if (
+                    "insufficient" in error_msg
+                    or "balance" in error_msg
+                    or "position" in error_msg
+                ):
+                    logger.warning(
+                        f"[SKIP] {symbol} - Position likely closed manually: {order_error}"
+                    )
+                    del self.positions[symbol]
+                    return
+                else:
+                    raise  # Re-raise if it's a different error
 
             # Get exit price from order
             exit_price = (
@@ -1155,8 +1215,21 @@ class InstitutionalTradingBot:
 
             del self.positions[symbol]
 
+        except ccxt.InsufficientFunds as e:
+            logger.warning(
+                f"[SKIP] {symbol} - Insufficient funds (likely closed manually): {e}"
+            )
+            if symbol in self.positions:
+                del self.positions[symbol]
+        except ccxt.InvalidOrder as e:
+            logger.warning(
+                f"[SKIP] {symbol} - Invalid order (position may be closed): {e}"
+            )
+            if symbol in self.positions:
+                del self.positions[symbol]
         except Exception as e:
             logger.error(f"[ERROR] Failed to close {symbol}: {e}")
+            logger.error(f"[ERROR] Keeping position in tracking for retry")
 
     def run_forever(self):
         """Main 24/7 trading loop"""
@@ -1224,7 +1297,9 @@ class InstitutionalTradingBot:
                             ) * 100
 
                         # Calculate dollar P&L
-                        position_value = float(pos["amount"]) * float(pos["entry_price"])
+                        position_value = float(pos["amount"]) * float(
+                            pos["entry_price"]
+                        )
                         pnl_dollar = position_value * (pnl_pct / 100)
 
                         logger.info(

@@ -75,6 +75,7 @@ git push -u origin main
 ### 3. Verify Upload
 
 Go to `https://github.com/YOUR_USERNAME/ai-trading-bot` and verify:
+
 - ✅ README.md displays properly
 - ✅ api_config.txt is NOT visible (protected by .gitignore)
 - ✅ All code files present
@@ -83,6 +84,7 @@ Go to `https://github.com/YOUR_USERNAME/ai-trading-bot` and verify:
 ### 4. Update README URLs
 
 After uploading, edit README.md and replace `YOUR_USERNAME` with your actual GitHub username:
+
 ```bash
 # Find and replace
 YOUR_USERNAME → actual_username
@@ -257,6 +259,7 @@ Bot will display ALL signals and execute only profitable ones!
 ```
 
 **Real-time Features:**
+
 - ✅ Display updates every 1 second
 - ✅ Live position P&L tracking
 - ✅ Portfolio performance statistics
@@ -269,11 +272,13 @@ Bot will display ALL signals and execute only profitable ones!
 ### Step-by-Step Installation
 
 #### 1. Update System
+
 ```bash
 sudo apt update && sudo apt upgrade -y
 ```
 
 #### 2. Install Python 3.10+ and Dependencies
+
 ```bash
 # Install Python and essential tools
 sudo apt install -y python3 python3-pip python3-venv git screen htop
@@ -283,6 +288,7 @@ python3 --version
 ```
 
 #### 3. Clone Repository
+
 ```bash
 # Clone from GitHub
 git clone https://github.com/YOUR_USERNAME/ai-trading-bot.git
@@ -294,6 +300,7 @@ source venv/bin/activate
 ```
 
 #### 4. Install Python Packages
+
 ```bash
 # Upgrade pip first
 pip install --upgrade pip
@@ -303,6 +310,7 @@ pip install -r requirements.txt
 ```
 
 #### 5. Configure Trading Bot
+
 ```bash
 # Copy config example
 cp api_config.txt.example api_config.txt
@@ -312,6 +320,7 @@ nano api_config.txt
 ```
 
 **Enter your Binance API credentials:**
+
 ```ini
 BINANCE_API_KEY=your_actual_api_key_here
 BINANCE_API_SECRET=your_actual_secret_here
@@ -323,6 +332,7 @@ MIN_CONFIDENCE=0.65
 **Save:** `Ctrl+O`, Enter, `Ctrl+X`
 
 #### 6. Test Run
+
 ```bash
 # Test bot (will ask for leverage and risk)
 python3 trading_bot_24_7.py
@@ -349,6 +359,7 @@ python3 trading_bot_24_7.py
 ```
 
 **Useful Commands:**
+
 ```bash
 # List all screens
 screen -ls
@@ -363,11 +374,13 @@ screen -X -S trading-bot quit
 #### **Method 2: Systemd Service (Auto-restart on crash)**
 
 Create service file:
+
 ```bash
 sudo nano /etc/systemd/system/trading-bot.service
 ```
 
 **Content:**
+
 ```ini
 [Unit]
 Description=AI Trading Bot
@@ -389,6 +402,7 @@ WantedBy=multi-user.target
 **Replace `YOUR_USERNAME` with your actual username!**
 
 **Enable and Start:**
+
 ```bash
 # Reload systemd
 sudo systemctl daemon-reload
@@ -407,6 +421,7 @@ sudo journalctl -u trading-bot -f
 ```
 
 **Manage Service:**
+
 ```bash
 # Stop bot
 sudo systemctl stop trading-bot
@@ -441,6 +456,7 @@ python3 trading_bot_24_7.py
 ### 📊 Monitoring
 
 #### Check Bot Status
+
 ```bash
 # If using screen
 screen -r trading-bot
@@ -454,6 +470,7 @@ tail -f ~/ai-trading-bot/trading_bot_24_7.log
 ```
 
 #### Check System Resources
+
 ```bash
 # CPU and memory usage
 htop
@@ -466,6 +483,7 @@ ps aux | grep python
 ```
 
 #### Check Trade Database
+
 ```bash
 cd ~/ai-trading-bot
 sqlite3 trades.db
@@ -482,6 +500,7 @@ SELECT COUNT(*) as wins FROM trades WHERE pnl > 0;
 ### 🔧 Troubleshooting Ubuntu
 
 #### Port Issues
+
 ```bash
 # Check if port 443 is open (Binance API)
 sudo ufw status
@@ -489,6 +508,7 @@ sudo ufw allow 443/tcp
 ```
 
 #### Time Sync Issues
+
 ```bash
 # Install NTP
 sudo apt install ntp -y
@@ -501,6 +521,7 @@ sudo timedatectl set-ntp true
 ```
 
 #### Permission Issues
+
 ```bash
 # Fix file permissions
 cd ~/ai-trading-bot
@@ -509,6 +530,7 @@ chmod 600 api_config.txt  # Secure config file
 ```
 
 #### Memory Issues (Low RAM VPS)
+
 ```bash
 # Create swap file (2GB)
 sudo fallocate -l 2G /swapfile
@@ -547,11 +569,13 @@ sudo systemctl start trading-bot
 ### 🔒 Security Best Practices
 
 1. **Secure API Config:**
+
    ```bash
    chmod 600 api_config.txt
    ```
 
 2. **Enable Firewall:**
+
    ```bash
    sudo ufw enable
    sudo ufw allow ssh
@@ -559,6 +583,7 @@ sudo systemctl start trading-bot
    ```
 
 3. **Use SSH Keys (Disable Password Login):**
+
    ```bash
    sudo nano /etc/ssh/sshd_config
    # Set: PasswordAuthentication no
@@ -577,12 +602,14 @@ sudo systemctl start trading-bot
 ### 📱 Remote Monitoring
 
 #### SSH from Phone/Laptop
+
 ```bash
 ssh username@your_vps_ip
 screen -r trading-bot  # View bot
 ```
 
 #### Telegram Bot (Optional - Future Feature)
+
 Coming soon: Real-time trade notifications via Telegram!
 
 ---

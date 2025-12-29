@@ -1,0 +1,22 @@
+{
+  "timestamp": "20251229_143842",
+  "symbols": [
+    "BTC/USDC",
+    "ETH/USDC"
+  ],
+  "train_accuracy": 0.9179190751445087,
+  "test_accuracy": 0.7057010785824345,
+  "roc_auc": 0.768049305419683,
+  "features_count": 59,
+  "best_params": {
+    "colsample_bytree": 0.6,
+    "learning_rate": 0.03,
+    "max_depth": 8,
+    "min_child_samples": 50,
+    "n_estimators": 300,
+    "num_leaves": 31,
+    "reg_alpha": 2.0,
+    "reg_lambda": 2.0,
+    "subsample": 0.6
+  }
+}

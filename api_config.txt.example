@@ -1,0 +1,30 @@
+# Binance API Configuration
+# IMPORTANT: Never commit this file to GitHub!
+# Format: KEY=VALUE (no spaces around =)
+
+BINANCE_API_KEY=your_api_key_here
+BINANCE_API_SECRET=your_api_secret_here
+
+# Risk Management
+RISK_PER_TRADE_PCT=2.0          # 2% risk per trade dari total portfolio
+                                 # Example: Portfolio $1000, risk 2% = $20 per trade
+                                 # Bot auto-calculate position size based on this
+
+# Trading Configuration
+MIN_CONFIDENCE=0.65             # 65% minimum confidence to execute trade
+                                 # Format: 0.40 = 40%, 0.65 = 65%, 0.70 = 70%
+                                 # Recommended: 0.65 (65%) for quality trades
+
+MAX_POSITIONS=2                 # Maximum concurrent positions
+
+STOP_LOSS_PCT=0.02              # 2% stop loss per trade
+                                 # Format: 0.02 = 2%, 0.03 = 3%
+
+TAKE_PROFIT_PCT=0.04            # 4% take profit per trade
+                                 # Format: 0.04 = 4%, 0.06 = 6%
+                                 # Recommended: 2x stop loss (1:2 risk/reward)
+
+CHECK_INTERVAL=300              # Check every 300 seconds (5 minutes)
+
+# Symbols (comma-separated, no spaces)
+SYMBOLS=BTC/USDC,ETH/USDC

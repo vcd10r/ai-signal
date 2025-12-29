@@ -35,9 +35,6 @@ wheels/
 .installed.cfg
 *.egg
 
-# Models (too large for git)
-models/*.pkl
-
 # Jupyter
 .ipynb_checkpoints
 

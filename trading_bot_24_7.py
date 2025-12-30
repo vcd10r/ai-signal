@@ -979,19 +979,48 @@ class InstitutionalTradingBot:
             # Margin needed (position / leverage)
             margin_needed = position_size / self.leverage
 
-            # SAFETY CHECK: Validate sufficient margin before opening position
+            # DEBUG: Log calculation details
             free_balance = balance["USDC"]["free"]
+            logger.info(f"\n[MARGIN CHECK] Pre-trade validation:")
+            logger.info(f"  Total Portfolio: ${total_usdc:,.2f}")
+            logger.info(f"  Free Balance: ${free_balance:,.2f}")
+            logger.info(f"  Used Balance: ${total_usdc - free_balance:,.2f}")
+            logger.info(f"  Risk %: {risk_pct}%")
+            logger.info(f"  Risk Amount: ${risk_amount:,.2f}")
+            logger.info(f"  Position Size (exposure): ${position_size:,.2f}")
+            logger.info(f"  Leverage: {self.leverage}x")
+            logger.info(f"  Margin Needed: ${margin_needed:,.2f}")
+            logger.info(f"  Open Positions: {len(self.positions)}")
+            if self.positions:
+                for sym, pos in self.positions.items():
+                    logger.info(f"    - {pos['side']} {sym}: ${pos['entry_price']:.2f} x {pos['amount']}")
+
+            # SAFETY CHECK: Validate sufficient margin before opening position
             margin_with_buffer = margin_needed * 1.05  # 5% buffer for fees/slippage
 
             if margin_with_buffer > free_balance:
-                logger.error(f"\n[INSUFFICIENT MARGIN] Cannot open position!")
-                logger.error(f"  Required: ${margin_with_buffer:,.2f} (with 5% buffer)")
-                logger.error(f"  Available: ${free_balance:,.2f}")
-                logger.error(f"  Shortfall: ${margin_with_buffer - free_balance:,.2f}")
-                logger.error(
-                    f"  Solutions: Reduce risk, increase leverage, or add capital"
-                )
-                return False
+                # Check if we can reduce position size to fit available margin
+                max_margin_available = free_balance * 0.95  # Use 95% of free balance
+                max_position_size = max_margin_available * self.leverage
+                
+                # Only auto-adjust if we can get at least 50% of intended position
+                if max_position_size >= (position_size * 0.5):
+                    logger.warning(f"\n⚠️ [AUTO-ADJUST] Insufficient margin for full position")
+                    logger.warning(f"  Intended: ${position_size:,.2f} → ${margin_needed:,.2f} margin")
+                    logger.warning(f"  Adjusted: ${max_position_size:,.2f} → ${max_margin_available:,.2f} margin")
+                    logger.warning(f"  Using {max_position_size/position_size*100:.0f}% of intended size")
+                    
+                    # Update position size and margin
+                    position_size = max_position_size
+                    margin_needed = max_margin_available
+                else:
+                    logger.warning(f"\n⏸️ [SKIPPED] Insufficient margin for {symbol}")
+                    logger.warning(f"  Signal: {signal['confidence']*100:.1f}% confidence {side}")
+                    logger.warning(f"  Required: ${margin_with_buffer:,.2f} (margin with 5% buffer)")
+                    logger.warning(f"  Available: ${free_balance:,.2f} (free balance)")
+                    logger.warning(f"  Shortfall: ${margin_with_buffer - free_balance:,.2f}")
+                    logger.warning(f"  💡 Wait for existing position to close")
+                    return False
 
             # Convert to amount in coins
             amount = position_size / price
@@ -1127,37 +1156,31 @@ class InstitutionalTradingBot:
             # Get all open orders for this symbol
             logger.info(f"[CLEANUP] Fetching open orders for {symbol}...")
             open_orders = self.exchange.fetch_open_orders(symbol)
-
+            
             if not open_orders:
                 logger.info(f"[CLEANUP] ✅ No pending orders to cancel for {symbol}")
                 return True
-
-            logger.info(
-                f"[CLEANUP] Found {len(open_orders)} open order(s) for {symbol}"
-            )
-
+            
+            logger.info(f"[CLEANUP] Found {len(open_orders)} open order(s) for {symbol}")
+            
             # Cancel each order
             cancelled_count = 0
             for order in open_orders:
                 try:
-                    order_id = order["id"]
-                    order_type = order.get("type", "UNKNOWN")
-                    order_side = order.get("side", "UNKNOWN")
-
-                    logger.info(
-                        f"[CLEANUP] Cancelling {order_type} {order_side} order {order_id}..."
-                    )
+                    order_id = order['id']
+                    order_type = order.get('type', 'UNKNOWN')
+                    order_side = order.get('side', 'UNKNOWN')
+                    
+                    logger.info(f"[CLEANUP] Cancelling {order_type} {order_side} order {order_id}...")
                     self.exchange.cancel_order(order_id, symbol)
                     logger.info(f"[CLEANUP] ✅ Cancelled {order_type} order {order_id}")
                     cancelled_count += 1
                 except Exception as e:
                     logger.error(f"[ERROR] Could not cancel order {order_id}: {e}")
-
-            logger.info(
-                f"[CLEANUP] ✅ Cancelled {cancelled_count}/{len(open_orders)} order(s) for {symbol}"
-            )
+            
+            logger.info(f"[CLEANUP] ✅ Cancelled {cancelled_count}/{len(open_orders)} order(s) for {symbol}")
             return True
-
+            
         except Exception as e:
             logger.error(f"[ERROR] Failed to cancel orders for {symbol}: {e}")
             return False
@@ -1168,7 +1191,7 @@ class InstitutionalTradingBot:
         try:
             binance_positions = self.exchange.fetch_positions()
             active_positions = {}
-
+            
             for p in binance_positions:
                 if float(p.get("contracts", 0)) > 0:
                     # Normalize symbol format (remove :USDC suffix if present)
@@ -1183,18 +1206,14 @@ class InstitutionalTradingBot:
                     logger.warning(
                         f"[SYNC] Position {symbol} closed externally. Removing from tracking."
                     )
-
+                    
                     # Cancel any pending TP/SL orders for this symbol
                     try:
-                        logger.info(
-                            f"[CLEANUP] Cancelling orphan orders for {symbol}..."
-                        )
+                        logger.info(f"[CLEANUP] Cancelling orphan orders for {symbol}...")
                         self.cancel_server_side_orders(symbol)
                     except Exception as e:
-                        logger.warning(
-                            f"[WARNING] Could not cancel orders for {symbol}: {e}"
-                        )
-
+                        logger.warning(f"[WARNING] Could not cancel orders for {symbol}: {e}")
+                    
                     del self.positions[symbol]
 
             # Add positions that exist on Binance but not in bot tracking
@@ -1319,9 +1338,7 @@ class InstitutionalTradingBot:
             # Cancel any pending SL/TP orders FIRST (before closing position)
             # This ensures cleanup happens even if close fails
             try:
-                logger.info(
-                    f"[CLEANUP] Cancelling pending TP/SL orders for {symbol}..."
-                )
+                logger.info(f"[CLEANUP] Cancelling pending TP/SL orders for {symbol}...")
                 self.cancel_server_side_orders(symbol)
             except Exception as e:
                 logger.warning(f"[WARNING] Could not cancel server-side orders: {e}")

@@ -1038,7 +1038,13 @@ class InstitutionalTradingBot:
 
             # Set SL/TP orders on Binance server for protection
             try:
-                self.set_server_side_orders(symbol, side, float(amount), signal["stop_loss"], signal["take_profit"])
+                self.set_server_side_orders(
+                    symbol,
+                    side,
+                    float(amount),
+                    signal["stop_loss"],
+                    signal["take_profit"],
+                )
             except Exception as e:
                 logger.warning(f"[WARNING] Could not set server-side SL/TP: {e}")
                 logger.warning(f"[WARNING] Bot will monitor SL/TP instead")
@@ -1051,71 +1057,96 @@ class InstitutionalTradingBot:
             logger.error(f"[ERROR] Trade execution failed: {e}")
             return False
 
-    def set_server_side_orders(self, symbol, side, amount, stop_loss_price, take_profit_price):
+    def set_server_side_orders(
+        self, symbol, side, amount, stop_loss_price, take_profit_price
+    ):
         """Set Stop Loss and Take Profit orders on Binance server"""
         try:
             # For LONG position: SL sell below entry, TP sell above entry
             # For SHORT position: SL buy above entry, TP buy below entry
-            
+
             if side == "LONG":
                 # Stop Loss: STOP_MARKET sell order
                 sl_order = self.exchange.create_order(
                     symbol=symbol,
-                    type='STOP_MARKET',
-                    side='sell',
+                    type="STOP_MARKET",
+                    side="sell",
                     amount=amount,
                     params={
-                        'stopPrice': stop_loss_price,
-                        'reduceOnly': True  # Only close position, don't open new
-                    }
+                        "stopPrice": stop_loss_price,
+                        "reduceOnly": True,  # Only close position, don't open new
+                    },
                 )
                 logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f}")
-                
+
                 # Take Profit: TAKE_PROFIT_MARKET sell order
                 tp_order = self.exchange.create_order(
                     symbol=symbol,
-                    type='TAKE_PROFIT_MARKET',
-                    side='sell',
+                    type="TAKE_PROFIT_MARKET",
+                    side="sell",
                     amount=amount,
-                    params={
-                        'stopPrice': take_profit_price,
-                        'reduceOnly': True
-                    }
+                    params={"stopPrice": take_profit_price, "reduceOnly": True},
                 )
-                logger.info(f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f}")
-                
+                logger.info(
+                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f}"
+                )
+
             else:  # SHORT
                 # Stop Loss: STOP_MARKET buy order
                 sl_order = self.exchange.create_order(
                     symbol=symbol,
-                    type='STOP_MARKET',
-                    side='buy',
+                    type="STOP_MARKET",
+                    side="buy",
                     amount=amount,
-                    params={
-                        'stopPrice': stop_loss_price,
-                        'reduceOnly': True
-                    }
+                    params={"stopPrice": stop_loss_price, "reduceOnly": True},
                 )
                 logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f}")
-                
+
                 # Take Profit: TAKE_PROFIT_MARKET buy order
                 tp_order = self.exchange.create_order(
                     symbol=symbol,
-                    type='TAKE_PROFIT_MARKET',
-                    side='buy',
+                    type="TAKE_PROFIT_MARKET",
+                    side="buy",
                     amount=amount,
-                    params={
-                        'stopPrice': take_profit_price,
-                        'reduceOnly': True
-                    }
+                    params={"stopPrice": take_profit_price, "reduceOnly": True},
                 )
-                logger.info(f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f}")
-            
+                logger.info(
+                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f}"
+                )
+
             logger.info(f"[SERVER PROTECTION] ✅ SL/TP orders set on Binance server")
+            return True
+
+        except Exception as e:
+            logger.error(f"[ERROR] Failed to set server-side orders: {e}")
+            return False
+
+    def cancel_server_side_orders(self, symbol):
+        """Cancel all open orders for a symbol (SL/TP cleanup)"""
+        try:
+            # Get all open orders for this symbol
+            open_orders = self.exchange.fetch_open_orders(symbol)
+            
+            if not open_orders:
+                logger.info(f"[CLEANUP] No pending orders to cancel for {symbol}")
+                return True
+            
+            # Cancel each order
+            cancelled_count = 0
+            for order in open_orders:
+                try:
+                    self.exchange.cancel_order(order['id'], symbol)
+                    order_type = order.get('type', 'UNKNOWN')
+                    logger.info(f"[CLEANUP] Cancelled {order_type} order {order['id']}")
+                    cancelled_count += 1
+                except Exception as e:
+                    logger.warning(f"[WARNING] Could not cancel order {order['id']}: {e}")
+            
+            logger.info(f"[CLEANUP] ✅ Cancelled {cancelled_count} pending order(s) for {symbol}")
             return True
             
         except Exception as e:
-            logger.error(f"[ERROR] Failed to set server-side orders: {e}")
+            logger.error(f"[ERROR] Failed to cancel orders for {symbol}: {e}")
             return False
 
     def check_positions(self):
@@ -1136,17 +1167,19 @@ class InstitutionalTradingBot:
                         f"[SYNC] Position {symbol} closed externally. Removing from tracking."
                     )
                     del self.positions[symbol]
-            
+
             # Add positions that exist on Binance but not in bot tracking
             for symbol, binance_pos in active_positions.items():
                 if symbol not in self.positions:
                     contracts = float(binance_pos.get("contracts", 0))
                     entry_price = float(binance_pos.get("entryPrice", 0))
                     side = "LONG" if contracts > 0 else "SHORT"
-                    
+
                     logger.warning(f"[SYNC] Found untracked position: {side} {symbol}")
-                    logger.warning(f"       Entry: ${entry_price:.2f}, Amount: {abs(contracts)}")
-                    
+                    logger.warning(
+                        f"       Entry: ${entry_price:.2f}, Amount: {abs(contracts)}"
+                    )
+
                     # Add to tracking with default TP/SL
                     self.positions[symbol] = {
                         "side": side,
@@ -1158,7 +1191,7 @@ class InstitutionalTradingBot:
                         "confidence": 0.0,  # Unknown confidence
                     }
                     logger.info(f"[SYNC] Added {symbol} to tracking with default TP/SL")
-                    
+
         except Exception as e:
             logger.error(f"[ERROR] Position sync failed: {e}")
 
@@ -1275,6 +1308,12 @@ class InstitutionalTradingBot:
                     return
                 else:
                     raise  # Re-raise if it's a different error
+
+            # Cancel any pending SL/TP orders on Binance server
+            try:
+                self.cancel_server_side_orders(symbol)
+            except Exception as e:
+                logger.warning(f"[WARNING] Could not cancel server-side orders: {e}")
 
             # Get exit price from order
             exit_price = (

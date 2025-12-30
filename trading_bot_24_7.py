@@ -1125,24 +1125,31 @@ class InstitutionalTradingBot:
         """Cancel all open orders for a symbol (SL/TP cleanup)"""
         try:
             # Get all open orders for this symbol
+            logger.info(f"[CLEANUP] Fetching open orders for {symbol}...")
             open_orders = self.exchange.fetch_open_orders(symbol)
             
             if not open_orders:
-                logger.info(f"[CLEANUP] No pending orders to cancel for {symbol}")
+                logger.info(f"[CLEANUP] ✅ No pending orders to cancel for {symbol}")
                 return True
+            
+            logger.info(f"[CLEANUP] Found {len(open_orders)} open order(s) for {symbol}")
             
             # Cancel each order
             cancelled_count = 0
             for order in open_orders:
                 try:
-                    self.exchange.cancel_order(order['id'], symbol)
+                    order_id = order['id']
                     order_type = order.get('type', 'UNKNOWN')
-                    logger.info(f"[CLEANUP] Cancelled {order_type} order {order['id']}")
+                    order_side = order.get('side', 'UNKNOWN')
+                    
+                    logger.info(f"[CLEANUP] Cancelling {order_type} {order_side} order {order_id}...")
+                    self.exchange.cancel_order(order_id, symbol)
+                    logger.info(f"[CLEANUP] ✅ Cancelled {order_type} order {order_id}")
                     cancelled_count += 1
                 except Exception as e:
-                    logger.warning(f"[WARNING] Could not cancel order {order['id']}: {e}")
+                    logger.error(f"[ERROR] Could not cancel order {order_id}: {e}")
             
-            logger.info(f"[CLEANUP] ✅ Cancelled {cancelled_count} pending order(s) for {symbol}")
+            logger.info(f"[CLEANUP] ✅ Cancelled {cancelled_count}/{len(open_orders)} order(s) for {symbol}")
             return True
             
         except Exception as e:
@@ -1170,6 +1177,14 @@ class InstitutionalTradingBot:
                     logger.warning(
                         f"[SYNC] Position {symbol} closed externally. Removing from tracking."
                     )
+                    
+                    # Cancel any pending TP/SL orders for this symbol
+                    try:
+                        logger.info(f"[CLEANUP] Cancelling orphan orders for {symbol}...")
+                        self.cancel_server_side_orders(symbol)
+                    except Exception as e:
+                        logger.warning(f"[WARNING] Could not cancel orders for {symbol}: {e}")
+                    
                     del self.positions[symbol]
 
             # Add positions that exist on Binance but not in bot tracking
@@ -1291,6 +1306,14 @@ class InstitutionalTradingBot:
 
             logger.info(f"[CLOSING] {side} {symbol} - {reason}")
 
+            # Cancel any pending SL/TP orders FIRST (before closing position)
+            # This ensures cleanup happens even if close fails
+            try:
+                logger.info(f"[CLEANUP] Cancelling pending TP/SL orders for {symbol}...")
+                self.cancel_server_side_orders(symbol)
+            except Exception as e:
+                logger.warning(f"[WARNING] Could not cancel server-side orders: {e}")
+
             # Safety Layer 4: Try close with error handling
             try:
                 if side == "LONG":
@@ -1312,12 +1335,6 @@ class InstitutionalTradingBot:
                     return
                 else:
                     raise  # Re-raise if it's a different error
-
-            # Cancel any pending SL/TP orders on Binance server
-            try:
-                self.cancel_server_side_orders(symbol)
-            except Exception as e:
-                logger.warning(f"[WARNING] Could not cancel server-side orders: {e}")
 
             # Get exit price from order
             exit_price = (

@@ -1154,11 +1154,15 @@ class InstitutionalTradingBot:
         # Safety Layer 1: Full sync with Binance positions
         try:
             binance_positions = self.exchange.fetch_positions()
-            active_positions = {
-                p["symbol"]: p
-                for p in binance_positions
-                if float(p.get("contracts", 0)) > 0
-            }
+            active_positions = {}
+            
+            for p in binance_positions:
+                if float(p.get("contracts", 0)) > 0:
+                    # Normalize symbol format (remove :USDC suffix if present)
+                    symbol = p["symbol"]
+                    if ":USDC" in symbol and symbol.endswith(":USDC"):
+                        symbol = symbol.replace(":USDC", "")
+                    active_positions[symbol] = p
 
             # Remove positions that were closed externally
             for symbol in list(self.positions.keys()):

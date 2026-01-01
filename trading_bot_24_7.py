@@ -31,14 +31,7 @@ import sys
 import traceback
 import sqlite3
 import csv
-from utils.indicators import (
-    calculate_institutional_composite,
-    calculate_order_flow,
-    detect_market_structure,
-    identify_liquidity_zones,
-    detect_institutional_candles,
-    calculate_fair_value_gap,
-)
+from utils.indicators import calculate_institutional_composite
 
 
 # First-time setup function
@@ -822,13 +815,12 @@ class InstitutionalTradingBot:
             return None
 
     def add_features(self, df):
-        """Add all institutional features (COMPLETE - matches training)"""
+        """Add all features - MUST MATCH TRAINING EXACTLY!"""
         # Basic price features
         df["returns"] = df["close"].pct_change()
         df["log_returns"] = np.log(df["close"] / df["close"].shift(1))
 
         # === TREND INDICATORS ===
-        # Multiple EMAs
         for period in [8, 21, 55, 89, 200]:
             df[f"ema_{period}"] = df["close"].ewm(span=period).mean()
             df[f"ema_{period}_slope"] = df[f"ema_{period}"].pct_change(5)
@@ -839,7 +831,6 @@ class InstitutionalTradingBot:
         df["macd"] = df["ema_12"] - df["ema_26"]
         df["macd_signal"] = df["macd"].ewm(span=9).mean()
         df["macd_histogram"] = df["macd"] - df["macd_signal"]
-        df["macd_histogram_slope"] = df["macd_histogram"].pct_change()
 
         # === MOMENTUM INDICATORS ===
         # RSI
@@ -849,12 +840,6 @@ class InstitutionalTradingBot:
             loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
             rs = gain / loss
             df[f"rsi_{period}"] = 100 - (100 / (1 + rs))
-
-        # Stochastic RSI
-        rsi = df["rsi_14"]
-        df["stoch_rsi"] = (rsi - rsi.rolling(14).min()) / (
-            rsi.rolling(14).max() - rsi.rolling(14).min()
-        )
 
         # ROC
         for period in [9, 21]:
@@ -883,97 +868,24 @@ class InstitutionalTradingBot:
             df[f"bb_width_{period}"] = (
                 df[f"bb_upper_{period}"] - df[f"bb_lower_{period}"]
             ) / sma
-            df[f"bb_position_{period}"] = (df["close"] - df[f"bb_lower_{period}"]) / (
-                df[f"bb_upper_{period}"] - df[f"bb_lower_{period}"]
-            )
-
-        # Keltner Channels
-        df["kc_middle"] = df["close"].ewm(span=20).mean()
-        df["kc_upper"] = df["kc_middle"] + (df["atr_14"] * 2)
-        df["kc_lower"] = df["kc_middle"] - (df["atr_14"] * 2)
 
         # === VOLUME INDICATORS ===
         df["volume_sma_20"] = df["volume"].rolling(window=20).mean()
         df["volume_ratio"] = df["volume"] / df["volume_sma_20"]
 
-        # OBV
+        # On-Balance Volume
         df["obv"] = (np.sign(df["close"].diff()) * df["volume"]).fillna(0).cumsum()
         df["obv_ema"] = df["obv"].ewm(span=20).mean()
 
-        # VWAP
-        df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
-        df["vwap_distance"] = (df["close"] - df["vwap"]) / df["vwap"]
+        # === INSTITUTIONAL INDICATORS ===
+        df = calculate_institutional_composite(df)
 
-        # === SMART MONEY INDICATORS ===
-        # MFI
-        typical_price = (df["high"] + df["low"] + df["close"]) / 3
-        money_flow = typical_price * df["volume"]
-        positive_flow = (
-            money_flow.where(typical_price > typical_price.shift(1), 0)
-            .rolling(14)
-            .sum()
-        )
-        negative_flow = (
-            money_flow.where(typical_price < typical_price.shift(1), 0)
-            .rolling(14)
-            .sum()
-        )
-        df["mfi"] = 100 - (100 / (1 + positive_flow / negative_flow))
-
-        # ADL
-        clv = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (
-            df["high"] - df["low"]
-        )
-        df["adl"] = (clv * df["volume"]).cumsum()
-        df["adl_ema"] = df["adl"].ewm(span=20).mean()
-
-        # === MARKET STRUCTURE ===
-        df["hh"] = df["high"].rolling(20).max()
-        df["ll"] = df["low"].rolling(20).min()
-        df["market_structure"] = np.where(
-            df["close"] > df["hh"].shift(1),
-            1,
-            np.where(df["close"] < df["ll"].shift(1), -1, 0),
-        )
-
-        # Pivot points
-        df["pivot"] = (df["high"] + df["low"] + df["close"]) / 3
-        df["r1"] = 2 * df["pivot"] - df["low"]
-        df["s1"] = 2 * df["pivot"] - df["high"]
-
-        # === REGIME DETECTION ===
-        df["volatility_regime"] = pd.qcut(
-            df["atr_pct"], q=3, labels=["low", "medium", "high"], duplicates="drop"
-        )
-        df["vol_regime_numeric"] = df["volatility_regime"].map(
-            {"low": 0, "medium": 1, "high": 2}
-        )
-
-        # ADX
-        plus_dm = df["high"].diff()
-        minus_dm = -df["low"].diff()
-        plus_dm[plus_dm < 0] = 0
-        minus_dm[minus_dm < 0] = 0
-        tr_14 = df["tr"].rolling(14).sum()
-        plus_di = 100 * (plus_dm.rolling(14).sum() / tr_14)
-        minus_di = 100 * (minus_dm.rolling(14).sum() / tr_14)
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-        df["adx"] = dx.rolling(14).mean()
-
-        # === TIME FEATURES ===
+        # === TIME-BASED FEATURES ===
         df["hour"] = df["timestamp"].dt.hour
         df["day_of_week"] = df["timestamp"].dt.dayofweek
         df["is_asian_session"] = ((df["hour"] >= 0) & (df["hour"] < 8)).astype(int)
         df["is_london_session"] = ((df["hour"] >= 8) & (df["hour"] < 16)).astype(int)
         df["is_ny_session"] = ((df["hour"] >= 13) & (df["hour"] < 21)).astype(int)
-
-        # === INSTITUTIONAL INDICATORS (CRITICAL!) ===
-        df = calculate_order_flow(df)
-        df = detect_market_structure(df)
-        df = identify_liquidity_zones(df)
-        df = detect_institutional_candles(df)
-        df = calculate_fair_value_gap(df)
-        df = calculate_institutional_composite(df)
 
         return df
 

@@ -198,11 +198,9 @@ def add_advanced_features(df):
     df["vol_regime_numeric"] = pd.cut(
         df["atr_pct"],
         bins=[-np.inf, atr_pct_quantiles.iloc[0], atr_pct_quantiles.iloc[1], np.inf],
-        labels=[0, 1, 2],
+        labels=[0, 1, 2]
     )
-    df["vol_regime_numeric"] = (
-        df["vol_regime_numeric"].fillna(1).astype(int)
-    )  # Fill NaN with 1 (medium)
+    df["vol_regime_numeric"] = df["vol_regime_numeric"].fillna(1).astype(int)  # Fill NaN with 1 (medium)
 
     # ADX
     plus_dm = df["high"].diff()
@@ -437,6 +435,8 @@ def main():
         "low",
         "close",
         "volume",
+        "returns",  # Exclude returns and log_returns (derived from close)
+        "log_returns",
         "future_return",
         "target",
         "symbol",

@@ -934,17 +934,17 @@ class InstitutionalTradingBot:
             # If bins are duplicate (constant data), use default value
             df["vol_regime_numeric"] = 1
 
-        # ADX (Average Directional Index)
+        # ADX (Average Directional Index) - ONLY adx, not intermediate values
         plus_dm = df["high"].diff()
         minus_dm = -df["low"].diff()
         plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
         minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
-        df["plus_dm"] = plus_dm.rolling(14).mean()
-        df["minus_dm"] = minus_dm.rolling(14).mean()
-        df["plus_di"] = 100 * df["plus_dm"] / df["atr_14"]
-        df["minus_di"] = 100 * df["minus_dm"] / df["atr_14"]
-        df["dx"] = 100 * abs(df["plus_di"] - df["minus_di"]) / (df["plus_di"] + df["minus_di"])
-        df["adx"] = df["dx"].rolling(14).mean()
+        
+        tr_14 = df["tr"].rolling(14).sum()
+        plus_di = 100 * (plus_dm.rolling(14).sum() / tr_14)
+        minus_di = 100 * (minus_dm.rolling(14).sum() / tr_14)
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        df["adx"] = dx.rolling(14).mean()  # Only keep adx, not intermediate values
 
         # === INSTITUTIONAL INDICATORS ===
         df = calculate_institutional_composite(df)

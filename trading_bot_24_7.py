@@ -975,19 +975,21 @@ class InstitutionalTradingBot:
             latest = df.iloc[-1:]
 
             # Extract features
-            X = latest[self.feature_cols]
+            exclude_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 
+                          'returns', 'log_returns', 'target', 'signal']
+            all_feature_cols = [c for c in df.columns if c not in exclude_cols]
+            X = latest[all_feature_cols]
             
             # ENSEMBLE PREDICTION (if using dual-model system)
             if hasattr(self, 'use_ensemble') and self.use_ensemble:
                 # Long-term model prediction
-                X_long = X[self.features_long] if all(f in X.columns for f in self.features_long) else X
-                X_long_selected = self.selector_long.transform(X_long.values.reshape(1, -1))
+                # Use all available features, selector will pick the right ones
+                X_long_selected = self.selector_long.transform(X.values.reshape(1, -1))
                 X_long_scaled = self.scaler_long.transform(X_long_selected)
                 pred_long_proba = self.model_long.predict_proba(X_long_scaled)[0]
                 
                 # Short-term model prediction
-                X_short = X[self.features_short] if all(f in X.columns for f in self.features_short) else X
-                X_short_selected = self.selector_short.transform(X_short.values.reshape(1, -1))
+                X_short_selected = self.selector_short.transform(X.values.reshape(1, -1))
                 X_short_scaled = self.scaler_short.transform(X_short_selected)
                 pred_short_proba = self.model_short.predict_proba(X_short_scaled)[0]
                 

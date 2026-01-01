@@ -79,7 +79,7 @@ def fetch_data(symbol, days):
 # FEATURE ENGINEERING - INSTITUTIONAL GRADE
 # ============================================================================
 def add_advanced_features(df):
-    """Add technical + institutional indicators"""
+    """Add technical + institutional indicators (COMPLETE VERSION)"""
 
     # Basic price features
     df["returns"] = df["close"].pct_change()
@@ -96,6 +96,7 @@ def add_advanced_features(df):
     df["macd"] = df["ema_12"] - df["ema_26"]
     df["macd_signal"] = df["macd"].ewm(span=9).mean()
     df["macd_histogram"] = df["macd"] - df["macd_signal"]
+    df["macd_histogram_slope"] = df["macd_histogram"].pct_change()
 
     # === MOMENTUM INDICATORS ===
     for period in [14, 21]:
@@ -104,6 +105,12 @@ def add_advanced_features(df):
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         rs = gain / loss
         df[f"rsi_{period}"] = 100 - (100 / (1 + rs))
+
+    # Stochastic RSI
+    rsi = df["rsi_14"]
+    df["stoch_rsi"] = (rsi - rsi.rolling(14).min()) / (
+        rsi.rolling(14).max() - rsi.rolling(14).min()
+    )
 
     # ROC
     for period in [9, 21]:
@@ -131,6 +138,14 @@ def add_advanced_features(df):
         df[f"bb_width_{period}"] = (
             df[f"bb_upper_{period}"] - df[f"bb_lower_{period}"]
         ) / sma
+        df[f"bb_position_{period}"] = (df["close"] - df[f"bb_lower_{period}"]) / (
+            df[f"bb_upper_{period}"] - df[f"bb_lower_{period}"]
+        )
+
+    # Keltner Channels
+    df["kc_middle"] = df["close"].ewm(span=20).mean()
+    df["kc_upper"] = df["kc_middle"] + (df["atr_14"] * 2)
+    df["kc_lower"] = df["kc_middle"] - (df["atr_14"] * 2)
 
     # === VOLUME INDICATORS ===
     df["volume_sma_20"] = df["volume"].rolling(window=20).mean()
@@ -139,6 +154,66 @@ def add_advanced_features(df):
     # On-Balance Volume
     df["obv"] = (np.sign(df["close"].diff()) * df["volume"]).fillna(0).cumsum()
     df["obv_ema"] = df["obv"].ewm(span=20).mean()
+
+    # VWAP
+    df["vwap"] = (df["close"] * df["volume"]).cumsum() / df["volume"].cumsum()
+    df["vwap_distance"] = (df["close"] - df["vwap"]) / df["vwap"]
+
+    # === SMART MONEY INDICATORS ===
+    # MFI
+    typical_price = (df["high"] + df["low"] + df["close"]) / 3
+    money_flow = typical_price * df["volume"]
+    positive_flow = (
+        money_flow.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
+    )
+    negative_flow = (
+        money_flow.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+    )
+    df["mfi"] = 100 - (100 / (1 + positive_flow / negative_flow))
+
+    # ADL
+    clv = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (
+        df["high"] - df["low"]
+    )
+    df["adl"] = (clv * df["volume"]).cumsum()
+    df["adl_ema"] = df["adl"].ewm(span=20).mean()
+
+    # === MARKET STRUCTURE ===
+    df["hh"] = df["high"].rolling(20).max()
+    df["ll"] = df["low"].rolling(20).min()
+    df["market_structure"] = np.where(
+        df["close"] > df["hh"].shift(1),
+        1,
+        np.where(df["close"] < df["ll"].shift(1), -1, 0),
+    )
+
+    # Pivot points
+    df["pivot"] = (df["high"] + df["low"] + df["close"]) / 3
+    df["r1"] = 2 * df["pivot"] - df["low"]
+    df["s1"] = 2 * df["pivot"] - df["high"]
+
+    # === REGIME DETECTION ===
+    # Volatility regime (numeric only, drop categorical)
+    atr_pct_quantiles = df["atr_pct"].quantile([0.33, 0.67])
+    df["vol_regime_numeric"] = pd.cut(
+        df["atr_pct"],
+        bins=[-np.inf, atr_pct_quantiles.iloc[0], atr_pct_quantiles.iloc[1], np.inf],
+        labels=[0, 1, 2],
+    )
+    df["vol_regime_numeric"] = (
+        df["vol_regime_numeric"].fillna(1).astype(int)
+    )  # Fill NaN with 1 (medium)
+
+    # ADX
+    plus_dm = df["high"].diff()
+    minus_dm = -df["low"].diff()
+    plus_dm[plus_dm < 0] = 0
+    minus_dm[minus_dm < 0] = 0
+    tr_14 = df["tr"].rolling(14).sum()
+    plus_di = 100 * (plus_dm.rolling(14).sum() / tr_14)
+    minus_di = 100 * (minus_dm.rolling(14).sum() / tr_14)
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    df["adx"] = dx.rolling(14).mean()
 
     # === INSTITUTIONAL INDICATORS (NEW!) ===
     df = calculate_institutional_composite(df)

@@ -254,6 +254,14 @@ class InstitutionalTradingBot:
         # Track positions
         self.positions = {}
         self.executed_signals = set()
+        
+        # ANTI-SPAM PROTECTION: Track recent trades and failures
+        self.recent_trades = {}  # {symbol: last_trade_timestamp}
+        self.trade_cooldown = 300  # 5 minutes cooldown between same symbol trades
+        self.failed_attempts = {}  # {symbol: failed_count}
+        self.max_failed_attempts = 3  # Max failed attempts before longer cooldown
+        logger.info("[ANTI-SPAM] Trade cooldown: 5 minutes per symbol")
+        logger.info("[ANTI-SPAM] Max failed attempts: 3 before extended cooldown")
 
         # Initialize trade history tracking
         self.trade_history = []
@@ -1143,6 +1151,50 @@ class InstitutionalTradingBot:
             symbol = signal["symbol"]
             price = signal["price"]
             side = signal["side"]
+            
+            # ANTI-SPAM: Check if position already exists
+            if symbol in self.positions:
+                logger.warning(f"[ANTI-SPAM] Position already exists for {symbol}")
+                logger.warning(f"  Current: {self.positions[symbol]['side']} @ ${self.positions[symbol]['entry_price']:.2f}\")"
+                return False
+            
+            # ANTI-SPAM: Check recent trade cooldown
+            current_time = time.time()
+            if symbol in self.recent_trades:
+                time_since_last = current_time - self.recent_trades[symbol]
+                cooldown_remaining = self.trade_cooldown - time_since_last
+                
+                if cooldown_remaining > 0:
+                    logger.warning(f"[ANTI-SPAM] Cooldown active for {symbol}")
+                    logger.warning(f"  Last trade: {time_since_last:.0f}s ago")
+                    logger.warning(f"  Wait: {cooldown_remaining:.0f}s more")
+                    return False
+            
+            # ANTI-SPAM: Check failed attempts
+            if symbol in self.failed_attempts and self.failed_attempts[symbol] >= self.max_failed_attempts:
+                logger.warning(f"[ANTI-SPAM] Max failed attempts reached for {symbol}")
+                logger.warning(f"  Failed: {self.failed_attempts[symbol]} times")
+                logger.warning(f"  Extended cooldown: 30 minutes")
+                # Check extended cooldown (30 min)
+                if symbol in self.recent_trades:
+                    if current_time - self.recent_trades[symbol] < 1800:  # 30 min
+                        return False
+                    else:
+                        # Reset after extended cooldown
+                        self.failed_attempts[symbol] = 0
+            
+            # ANTI-SPAM: Verify no pending orders for this symbol
+            try:
+                open_orders = self.exchange.fetch_open_orders(symbol)
+                if open_orders:
+                    logger.warning(f"[ANTI-SPAM] Found {len(open_orders)} pending orders for {symbol}")
+                    logger.warning(f"  Cancelling pending orders first...")
+                    for order in open_orders:
+                        self.exchange.cancel_order(order['id'], symbol)
+                        logger.info(f"  Cancelled: {order['type']} {order['side']} order {order['id']}")
+                    time.sleep(1)  # Wait for cancellation to process
+            except Exception as e:
+                logger.error(f"[ERROR] Failed to check/cancel pending orders: {e}")
 
             # Calculate position size based on risk management
             # Get current balance
@@ -1237,27 +1289,88 @@ class InstitutionalTradingBot:
             logger.info(f"  Order Type: MARKET (instant execution)")
 
             # Place MARKET order for instant execution
+            logger.info(f"[ORDER] Placing {side} MARKET order...")
             if side == "LONG":
                 order = self.exchange.create_market_buy_order(symbol, amount)
             else:  # SHORT
                 order = self.exchange.create_market_sell_order(symbol, amount)
 
+            # Verify order was filled
+            if not order or order.get('status') not in ['closed', 'filled']:
+                logger.error(f"[ERROR] Order not filled! Status: {order.get('status') if order else 'None'}")
+                logger.error(f"  Order details: {order}")
+                # Increment failed attempts
+                self.failed_attempts[symbol] = self.failed_attempts.get(symbol, 0) + 1
+                # Set cooldown to prevent immediate retry
+                self.recent_trades[symbol] = time.time()
+                return False
+
             # Get filled price from order
             filled_price = (
                 float(order.get("average", price)) if order.get("average") else price
             )
-            logger.info(f"[FILLED] Order executed at ${filled_price:.2f}")
-
-            # Track position
+            filled_amount = float(order.get('filled', amount))
+            logger.info(f"[FILLED] ✅ Order executed at ${filled_price:.2f} | Amount: {filled_amount}")
+            logger.info(f"  Order ID: {order.get('id', 'N/A')}")
+            logger.info(f"  Status: {order.get('status', 'N/A')}")
+            
+            # Wait briefly for exchange to update position
+            time.sleep(1)
+            
+            # Verify position exists on exchange before tracking
+            logger.info(f"[VERIFY] Checking position on exchange...")
+            time.sleep(0.5)  # Brief wait for position update
+            
+            try:
+                exchange_positions = self.exchange.fetch_positions([symbol])
+                position_found = False
+                
+                for pos in exchange_positions:
+                    contracts = float(pos.get('contracts', 0))
+                    if abs(contracts) > 0:
+                        position_found = True
+                        actual_side = "LONG" if contracts > 0 else "SHORT"
+                        actual_entry = float(pos.get('entryPrice', filled_price))
+                        
+                        logger.info(f"[VERIFY] ✅ Position confirmed on exchange")
+                        logger.info(f"  Side: {actual_side} (expected: {side})")
+                        logger.info(f"  Entry: ${actual_entry:.2f}")
+                        logger.info(f"  Contracts: {abs(contracts)}")
+                        
+                        # Use actual values from exchange
+                        filled_price = actual_entry
+                        filled_amount = abs(contracts)
+                        break
+                
+                if not position_found:
+                    logger.error(f"[ERROR] Position not found on exchange after order!")
+                    logger.error(f"  Order was filled but position missing")
+                    logger.error(f"  This indicates an exchange sync issue")
+                    # Increment failed attempts
+                    self.failed_attempts[symbol] = self.failed_attempts.get(symbol, 0) + 1
+                    # Set cooldown
+                    self.recent_trades[symbol] = time.time()
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"[ERROR] Failed to verify position: {e}\")\n                # Still track locally but mark as unverified\n                logger.warning(f"[WARNING] Tracking position locally without verification")
+            
+            # Track position with order ID
             self.positions[symbol] = {
                 "side": side,
                 "entry_price": filled_price,
-                "amount": float(amount),
+                "amount": float(filled_amount),
                 "stop_loss": signal["stop_loss"],
                 "take_profit": signal["take_profit"],
                 "opened_at": datetime.now(),
                 "confidence": signal["confidence"],
+                "order_id": order.get('id', 'N/A'),
             }
+            
+            # Record trade timestamp (anti-spam)
+            self.recent_trades[symbol] = time.time()
+            # Reset failed attempts on success
+            self.failed_attempts[symbol] = 0
 
             # Set SL/TP orders on Binance server for protection - CRITICAL!
             logger.info(f"\n[PROTECTION] Setting server-side SL/TP orders...")
@@ -1269,10 +1382,12 @@ class InstitutionalTradingBot:
                     signal["stop_loss"],
                     signal["take_profit"],
                 )
-                
+
                 if not sl_tp_success:
                     logger.error(f"[CRITICAL] Failed to set SL/TP orders!")
-                    logger.error(f"[CRITICAL] Closing position immediately for safety...")
+                    logger.error(
+                        f"[CRITICAL] Closing position immediately for safety..."
+                    )
                     # Close position immediately if SL/TP failed
                     try:
                         if side == "LONG":
@@ -1283,9 +1398,9 @@ class InstitutionalTradingBot:
                     except Exception as close_err:
                         logger.error(f"[ERROR] Could not close position: {close_err}")
                     return False
-                
+
                 logger.info(f"[PROTECTION] ✅ SL/TP orders successfully set!")
-                    
+
             except Exception as e:
                 logger.error(f"[CRITICAL] Exception setting SL/TP: {e}")
                 logger.error(f"[CRITICAL] Closing position immediately for safety...")
@@ -1300,12 +1415,25 @@ class InstitutionalTradingBot:
                     logger.error(f"[ERROR] Could not close position: {close_err}")
                 return False
 
-            logger.info(f"[SUCCESS] Position opened: {side} {symbol} with SL/TP protection")
+            logger.info(
+                f"[SUCCESS] Position opened: {side} {symbol} with SL/TP protection"
+            )
+            logger.info(f"[COOLDOWN] Next trade for {symbol} allowed after 5 minutes")
 
             return True
 
         except Exception as e:
             logger.error(f"[ERROR] Trade execution failed: {e}")
+            logger.error(f"  Exception type: {type(e).__name__}")
+            logger.error(f"  Exception details: {str(e)}")
+            
+            # Record failed attempt
+            self.failed_attempts[symbol] = self.failed_attempts.get(symbol, 0) + 1
+            logger.warning(f"[FAILED] Attempt {self.failed_attempts[symbol]}/{self.max_failed_attempts}")
+            
+            # Set cooldown even on failure to prevent spam
+            self.recent_trades[symbol] = time.time()
+            
             return False
 
     def set_server_side_orders(
@@ -1314,7 +1442,7 @@ class InstitutionalTradingBot:
         """
         Set Stop Loss and Take Profit orders on Binance server with OCO behavior
         Using closePosition=true to ensure when one hits, the other auto-cancels
-        
+
         Returns True if both orders successfully placed, False otherwise
         """
         try:
@@ -1324,7 +1452,7 @@ class InstitutionalTradingBot:
             logger.info(f"  Amount: {amount}")
             logger.info(f"  Stop Loss: ${stop_loss_price:.2f}")
             logger.info(f"  Take Profit: ${take_profit_price:.2f}")
-            
+
             # For LONG position: SL sell below entry, TP sell above entry
             # For SHORT position: SL buy above entry, TP buy below entry
 

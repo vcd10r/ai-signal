@@ -132,49 +132,51 @@ try:
 except ImportError:
     from config import *
 
+
 # Setup logging with AUTO-ROTATION (7 days, keep 14 days backup)
 def setup_logging_with_rotation():
     """Setup logging dengan auto-rotation 7 hari"""
     log_dir = os.path.dirname(os.path.abspath(__file__))
     log_file = os.path.join(log_dir, LOG_FILE)
-    
+
     # Create rotating file handler (rotate setiap 7 hari, keep 2 backup)
     handler = TimedRotatingFileHandler(
         log_file,
-        when='D',        # Daily
-        interval=7,      # Every 7 days
-        backupCount=2,   # Keep 2 old log files (2 weeks backup)
-        encoding='utf-8'
+        when="D",  # Daily
+        interval=7,  # Every 7 days
+        backupCount=2,  # Keep 2 old log files (2 weeks backup)
+        encoding="utf-8",
     )
     handler.suffix = "%Y%m%d"  # Suffix: trading_bot_24_7.log.20251229
-    
+
     # Format log messages
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     handler.setFormatter(formatter)
-    
+
     # Setup logger
     logger_root = logging.getLogger()
     logger_root.setLevel(getattr(logging, LOG_LEVEL))
     logger_root.addHandler(handler)
-    
+
     # Also print to console
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     logger_root.addHandler(console_handler)
-    
+
     # Cleanup old log files manually (older than 14 days)
     cleanup_old_logs(log_dir)
-    
+
     return logger_root
+
 
 def cleanup_old_logs(log_dir, days=14):
     """Delete log files older than X days"""
     import time
-    
-    log_pattern = os.path.join(log_dir, 'trading_bot_24_7.log.*')
+
+    log_pattern = os.path.join(log_dir, "trading_bot_24_7.log.*")
     current_time = time.time()
     days_in_seconds = days * 86400
-    
+
     for log_file in glob.glob(log_pattern):
         file_age = current_time - os.path.getmtime(log_file)
         if file_age > days_in_seconds:
@@ -184,12 +186,14 @@ def cleanup_old_logs(log_dir, days=14):
             except Exception as e:
                 print(f"[ERROR] Could not delete {log_file}: {e}")
 
+
 # Initialize logging
 setup_logging_with_rotation()
 
 # Force UTF-8 for stdout
 if sys.stdout.encoding != "utf-8":
     import io
+
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 logger = logging.getLogger(__name__)
@@ -288,66 +292,78 @@ class InstitutionalTradingBot:
         """Load latest model (ensemble or single)"""
         try:
             # Check for ENSEMBLE models first (preferred)
-            ensemble_metadata_files = list(Path("models").glob("ensemble_metadata_*.json"))
-            
+            ensemble_metadata_files = list(
+                Path("models").glob("ensemble_metadata_*.json")
+            )
+
             if ensemble_metadata_files:
                 # Load ENSEMBLE MODELS (HYBRID SYSTEM)
-                latest_metadata = max(ensemble_metadata_files, key=lambda x: x.stat().st_mtime)
-                
+                latest_metadata = max(
+                    ensemble_metadata_files, key=lambda x: x.stat().st_mtime
+                )
+
                 with open(latest_metadata, "r") as f:
                     metadata = json.load(f)
-                
+
                 logger.info(f"[ENSEMBLE MODEL] Loading hybrid dual-model system...")
-                
+
                 # Load long-term model
                 with open(metadata["long_term"]["model_path"], "rb") as f:
                     long_data = pickle.load(f)
-                
+
                 # Load short-term model
                 with open(metadata["short_term"]["model_path"], "rb") as f:
                     short_data = pickle.load(f)
-                
+
                 # Store ensemble components
                 self.model_long = long_data["model"]
                 self.scaler_long = long_data["scaler"]
                 self.selector_long = long_data["selector"]
                 self.features_long = long_data["features"]
-                
+
                 self.model_short = short_data["model"]
                 self.scaler_short = short_data["scaler"]
                 self.selector_short = short_data["selector"]
                 self.features_short = short_data["features"]
-                
+
                 # Weights for ensemble
                 self.weight_long = metadata["long_term"]["weight"]
                 self.weight_short = metadata["short_term"]["weight"]
-                
+
                 # Use ensemble mode
                 self.use_ensemble = True
                 self.feature_cols = list(set(self.features_long + self.features_short))
-                
-                logger.info(f"  ✅ Long-term (6M): {metadata['long_term']['accuracy']*100:.2f}% acc, weight={self.weight_long}")
-                logger.info(f"  ✅ Short-term (30D): {metadata['short_term']['accuracy']*100:.2f}% acc, weight={self.weight_short}")
-                logger.info(f"  🎯 Ensemble: {metadata['ensemble']['weighted_accuracy']*100:.2f}% weighted accuracy")
-                
+
+                logger.info(
+                    f"  ✅ Long-term (6M): {metadata['long_term']['accuracy']*100:.2f}% acc, weight={self.weight_long}"
+                )
+                logger.info(
+                    f"  ✅ Short-term (30D): {metadata['short_term']['accuracy']*100:.2f}% acc, weight={self.weight_short}"
+                )
+                logger.info(
+                    f"  🎯 Ensemble: {metadata['ensemble']['weighted_accuracy']*100:.2f}% weighted accuracy"
+                )
+
             else:
                 # Fallback to SINGLE MODEL
-                model_files = list(Path("models").glob("institutional_model_usdc_*.pkl"))
+                model_files = list(
+                    Path("models").glob("institutional_model_usdc_*.pkl")
+                )
                 if not model_files:
                     raise FileNotFoundError(
                         "No model found! Run train_hybrid_ensemble.py or train_institutional.py first"
                     )
-                
+
                 latest_model = max(model_files, key=lambda x: x.stat().st_mtime)
-                
+
                 with open(latest_model, "rb") as f:
                     model_data = pickle.load(f)
-                
+
                 self.model = model_data["model"]
                 self.scaler = model_data["scaler"]
                 self.feature_cols = model_data["feature_cols"]
                 self.use_ensemble = False
-                
+
                 logger.info(f"[SINGLE MODEL] Loaded: {latest_model.name}")
                 logger.info(f"  Test Accuracy: {model_data['test_acc']*100:.2f}%")
                 logger.info(f"  ROC-AUC: {model_data['roc_auc']:.4f}")
@@ -894,19 +910,31 @@ class InstitutionalTradingBot:
         df["obv_ema"] = df["obv"].ewm(span=20).mean()
 
         # VWAP
-        df["vwap"] = (df["volume"] * (df["high"] + df["low"] + df["close"]) / 3).cumsum() / df["volume"].cumsum()
+        df["vwap"] = (
+            df["volume"] * (df["high"] + df["low"] + df["close"]) / 3
+        ).cumsum() / df["volume"].cumsum()
         df["vwap_distance"] = (df["close"] - df["vwap"]) / df["vwap"] * 100
 
         # MFI (Money Flow Index)
         typical_price = (df["high"] + df["low"] + df["close"]) / 3
         raw_money_flow = typical_price * df["volume"]
-        positive_flow = raw_money_flow.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
-        negative_flow = raw_money_flow.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+        positive_flow = (
+            raw_money_flow.where(typical_price > typical_price.shift(1), 0)
+            .rolling(14)
+            .sum()
+        )
+        negative_flow = (
+            raw_money_flow.where(typical_price < typical_price.shift(1), 0)
+            .rolling(14)
+            .sum()
+        )
         mfi_ratio = positive_flow / negative_flow
         df["mfi"] = 100 - (100 / (1 + mfi_ratio))
 
         # ADL (Accumulation/Distribution Line)
-        clv = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (df["high"] - df["low"])
+        clv = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (
+            df["high"] - df["low"]
+        )
         df["adl"] = (clv * df["volume"]).fillna(0).cumsum()
         df["adl_ema"] = df["adl"].ewm(span=20).mean()
 
@@ -916,7 +944,9 @@ class InstitutionalTradingBot:
         df["market_structure"] = df["hh"] - df["ll"]
 
         # Pivot Points
-        df["pivot"] = (df["high"].shift(1) + df["low"].shift(1) + df["close"].shift(1)) / 3
+        df["pivot"] = (
+            df["high"].shift(1) + df["low"].shift(1) + df["close"].shift(1)
+        ) / 3
         df["r1"] = 2 * df["pivot"] - df["low"].shift(1)
         df["s1"] = 2 * df["pivot"] - df["high"].shift(1)
 
@@ -925,9 +955,14 @@ class InstitutionalTradingBot:
         try:
             df["vol_regime_numeric"] = pd.cut(
                 df["atr_pct"],
-                bins=[-np.inf, atr_pct_quantiles.iloc[0], atr_pct_quantiles.iloc[1], np.inf],
+                bins=[
+                    -np.inf,
+                    atr_pct_quantiles.iloc[0],
+                    atr_pct_quantiles.iloc[1],
+                    np.inf,
+                ],
                 labels=[0, 1, 2],
-                duplicates='drop'
+                duplicates="drop",
             )
             df["vol_regime_numeric"] = df["vol_regime_numeric"].fillna(1).astype(int)
         except ValueError:
@@ -939,7 +974,7 @@ class InstitutionalTradingBot:
         minus_dm = -df["low"].diff()
         plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
         minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
-        
+
         tr_14 = df["tr"].rolling(14).sum()
         plus_di = 100 * (plus_dm.rolling(14).sum() / tr_14)
         minus_di = 100 * (minus_dm.rolling(14).sum() / tr_14)
@@ -975,29 +1010,43 @@ class InstitutionalTradingBot:
             latest = df.iloc[-1:]
 
             # Extract features
-            exclude_cols = ['timestamp', 'open', 'high', 'low', 'close', 'volume', 
-                          'returns', 'log_returns', 'target', 'signal']
+            exclude_cols = [
+                "timestamp",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "returns",
+                "log_returns",
+                "target",
+                "signal",
+            ]
             all_feature_cols = [c for c in df.columns if c not in exclude_cols]
             X = latest[all_feature_cols]
-            
+
             # ENSEMBLE PREDICTION (if using dual-model system)
-            if hasattr(self, 'use_ensemble') and self.use_ensemble:
+            if hasattr(self, "use_ensemble") and self.use_ensemble:
                 # Long-term model prediction
                 # Use all available features, selector will pick the right ones
                 X_long_selected = self.selector_long.transform(X.values.reshape(1, -1))
                 X_long_scaled = self.scaler_long.transform(X_long_selected)
                 pred_long_proba = self.model_long.predict_proba(X_long_scaled)[0]
-                
+
                 # Short-term model prediction
-                X_short_selected = self.selector_short.transform(X.values.reshape(1, -1))
+                X_short_selected = self.selector_short.transform(
+                    X.values.reshape(1, -1)
+                )
                 X_short_scaled = self.scaler_short.transform(X_short_selected)
                 pred_short_proba = self.model_short.predict_proba(X_short_scaled)[0]
-                
+
                 # Weighted ensemble (70% long + 30% short)
-                proba_all = (pred_long_proba * self.weight_long) + (pred_short_proba * self.weight_short)
+                proba_all = (pred_long_proba * self.weight_long) + (
+                    pred_short_proba * self.weight_short
+                )
                 prediction = 1 if proba_all[1] > proba_all[0] else 0
                 confidence = proba_all.max()
-                
+
             else:
                 # SINGLE MODEL prediction (fallback)
                 X_scaled = self.scaler.transform(X)
@@ -1012,7 +1061,7 @@ class InstitutionalTradingBot:
             # >80% confidence = SCALP (1.5% TP, 0.75% SL, quick in/out)
             # 70-80% confidence = SWING (4% TP, 2% SL, hold longer)
             # <70% confidence = SKIP (below threshold)
-            
+
             if confidence >= 0.80:  # 🔥 SCALP MODE (HIGH CONFIDENCE)
                 status = "🔥 SCALP"
                 action_type = "LONG" if prediction == 1 else "SHORT"
@@ -1022,7 +1071,7 @@ class InstitutionalTradingBot:
                 # Aggressive TP/SL for scalping
                 tp_pct = 0.015  # 1.5% TP
                 sl_pct = 0.0075  # 0.75% SL
-                
+
             elif confidence >= MIN_CONFIDENCE:  # ⭐ SWING MODE (MEDIUM-HIGH CONFIDENCE)
                 status = "⭐ SWING"
                 action_type = "LONG" if prediction == 1 else "SHORT"
@@ -1032,7 +1081,7 @@ class InstitutionalTradingBot:
                 # Standard TP/SL for swing
                 tp_pct = TAKE_PROFIT_PCT  # 4% TP
                 sl_pct = STOP_LOSS_PCT  # 2% SL
-                
+
             else:  # ⏸️ SKIP (LOW CONFIDENCE)
                 status = "⏸️ SKIP"
                 reason = f"Low confidence ({confidence*100:.1f}% < {MIN_CONFIDENCE*100:.0f}%)"
@@ -1210,20 +1259,48 @@ class InstitutionalTradingBot:
                 "confidence": signal["confidence"],
             }
 
-            # Set SL/TP orders on Binance server for protection
+            # Set SL/TP orders on Binance server for protection - CRITICAL!
+            logger.info(f"\n[PROTECTION] Setting server-side SL/TP orders...")
             try:
-                self.set_server_side_orders(
+                sl_tp_success = self.set_server_side_orders(
                     symbol,
                     side,
                     float(amount),
                     signal["stop_loss"],
                     signal["take_profit"],
                 )
+                
+                if not sl_tp_success:
+                    logger.error(f"[CRITICAL] Failed to set SL/TP orders!")
+                    logger.error(f"[CRITICAL] Closing position immediately for safety...")
+                    # Close position immediately if SL/TP failed
+                    try:
+                        if side == "LONG":
+                            self.exchange.create_market_sell_order(symbol, amount)
+                        else:
+                            self.exchange.create_market_buy_order(symbol, amount)
+                        logger.info(f"[SAFETY] Position closed - SL/TP setup failed")
+                    except Exception as close_err:
+                        logger.error(f"[ERROR] Could not close position: {close_err}")
+                    return False
+                
+                logger.info(f"[PROTECTION] ✅ SL/TP orders successfully set!")
+                    
             except Exception as e:
-                logger.warning(f"[WARNING] Could not set server-side SL/TP: {e}")
-                logger.warning(f"[WARNING] Bot will monitor SL/TP instead")
+                logger.error(f"[CRITICAL] Exception setting SL/TP: {e}")
+                logger.error(f"[CRITICAL] Closing position immediately for safety...")
+                # Close position immediately if exception occurred
+                try:
+                    if side == "LONG":
+                        self.exchange.create_market_sell_order(symbol, amount)
+                    else:
+                        self.exchange.create_market_buy_order(symbol, amount)
+                    logger.info(f"[SAFETY] Position closed - SL/TP setup failed")
+                except Exception as close_err:
+                    logger.error(f"[ERROR] Could not close position: {close_err}")
+                return False
 
-            logger.info(f"[SUCCESS] Position opened: {side} {symbol}")
+            logger.info(f"[SUCCESS] Position opened: {side} {symbol} with SL/TP protection")
 
             return True
 
@@ -1237,13 +1314,23 @@ class InstitutionalTradingBot:
         """
         Set Stop Loss and Take Profit orders on Binance server with OCO behavior
         Using closePosition=true to ensure when one hits, the other auto-cancels
+        
+        Returns True if both orders successfully placed, False otherwise
         """
         try:
+            logger.info(f"[SL/TP] Setting up protection orders...")
+            logger.info(f"  Symbol: {symbol}")
+            logger.info(f"  Side: {side}")
+            logger.info(f"  Amount: {amount}")
+            logger.info(f"  Stop Loss: ${stop_loss_price:.2f}")
+            logger.info(f"  Take Profit: ${take_profit_price:.2f}")
+            
             # For LONG position: SL sell below entry, TP sell above entry
             # For SHORT position: SL buy above entry, TP buy below entry
 
             if side == "LONG":
                 # Stop Loss: STOP_MARKET sell order
+                logger.info(f"[SL/TP] Creating STOP_MARKET sell order...")
                 sl_order = self.exchange.create_order(
                     symbol=symbol,
                     type="STOP_MARKET",
@@ -1255,9 +1342,12 @@ class InstitutionalTradingBot:
                         "closePosition": True,  # Close entire position (auto-cancel other orders)
                     },
                 )
-                logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f} (closePosition=true)")
+                logger.info(
+                    f"[SL ORDER] ✅ STOP MARKET @ ${stop_loss_price:.2f} (ID: {sl_order.get('id', 'N/A')})"
+                )
 
                 # Take Profit: TAKE_PROFIT_MARKET sell order
+                logger.info(f"[SL/TP] Creating TAKE_PROFIT_MARKET sell order...")
                 tp_order = self.exchange.create_order(
                     symbol=symbol,
                     type="TAKE_PROFIT_MARKET",
@@ -1270,11 +1360,12 @@ class InstitutionalTradingBot:
                     },
                 )
                 logger.info(
-                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f} (closePosition=true)"
+                    f"[TP ORDER] ✅ TAKE PROFIT MARKET @ ${take_profit_price:.2f} (ID: {tp_order.get('id', 'N/A')})"
                 )
 
             else:  # SHORT
                 # Stop Loss: STOP_MARKET buy order
+                logger.info(f"[SL/TP] Creating STOP_MARKET buy order...")
                 sl_order = self.exchange.create_order(
                     symbol=symbol,
                     type="STOP_MARKET",
@@ -1286,9 +1377,12 @@ class InstitutionalTradingBot:
                         "closePosition": True,  # Close entire position (auto-cancel other orders)
                     },
                 )
-                logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f} (closePosition=true)")
+                logger.info(
+                    f"[SL ORDER] ✅ STOP MARKET @ ${stop_loss_price:.2f} (ID: {sl_order.get('id', 'N/A')})"
+                )
 
                 # Take Profit: TAKE_PROFIT_MARKET buy order
+                logger.info(f"[SL/TP] Creating TAKE_PROFIT_MARKET buy order...")
                 tp_order = self.exchange.create_order(
                     symbol=symbol,
                     type="TAKE_PROFIT_MARKET",
@@ -1301,15 +1395,21 @@ class InstitutionalTradingBot:
                     },
                 )
                 logger.info(
-                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f} (closePosition=true)"
+                    f"[TP ORDER] ✅ TAKE PROFIT MARKET @ ${take_profit_price:.2f} (ID: {tp_order.get('id', 'N/A')})"
                 )
 
-            logger.info(f"[SERVER PROTECTION] ✅ SL/TP orders LINKED (OCO-like behavior)")
-            logger.info(f"  💡 When TP hits → SL auto-cancels | When SL hits → TP auto-cancels")
+            logger.info(
+                f"[SERVER PROTECTION] ✅ SL/TP orders LINKED (OCO-like behavior)"
+            )
+            logger.info(
+                f"  💡 When TP hits → SL auto-cancels | When SL hits → TP auto-cancels"
+            )
             return True
 
         except Exception as e:
             logger.error(f"[ERROR] Failed to set server-side orders: {e}")
+            logger.error(f"[ERROR] Exception type: {type(e).__name__}")
+            logger.error(f"[ERROR] Exception details: {str(e)}")
             return False
 
     def cancel_server_side_orders(self, symbol):

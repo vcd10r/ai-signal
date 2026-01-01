@@ -831,6 +831,7 @@ class InstitutionalTradingBot:
         df["macd"] = df["ema_12"] - df["ema_26"]
         df["macd_signal"] = df["macd"].ewm(span=9).mean()
         df["macd_histogram"] = df["macd"] - df["macd_signal"]
+        df["macd_histogram_slope"] = df["macd_histogram"].pct_change(3)
 
         # === MOMENTUM INDICATORS ===
         # RSI
@@ -840,6 +841,13 @@ class InstitutionalTradingBot:
             loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
             rs = gain / loss
             df[f"rsi_{period}"] = 100 - (100 / (1 + rs))
+
+        # Stochastic RSI
+        rsi = df["rsi_14"]
+        stoch_rsi = (rsi - rsi.rolling(window=14).min()) / (
+            rsi.rolling(window=14).max() - rsi.rolling(window=14).min()
+        )
+        df["stoch_rsi"] = stoch_rsi * 100
 
         # ROC
         for period in [9, 21]:
@@ -868,6 +876,14 @@ class InstitutionalTradingBot:
             df[f"bb_width_{period}"] = (
                 df[f"bb_upper_{period}"] - df[f"bb_lower_{period}"]
             ) / sma
+            df[f"bb_position_{period}"] = (df["close"] - df[f"bb_lower_{period}"]) / (
+                df[f"bb_upper_{period}"] - df[f"bb_lower_{period}"]
+            )
+
+        # Keltner Channels
+        df["kc_middle"] = df["close"].ewm(span=20).mean()
+        df["kc_upper"] = df["kc_middle"] + (df["atr_14"] * 2)
+        df["kc_lower"] = df["kc_middle"] - (df["atr_14"] * 2)
 
         # === VOLUME INDICATORS ===
         df["volume_sma_20"] = df["volume"].rolling(window=20).mean()
@@ -876,6 +892,59 @@ class InstitutionalTradingBot:
         # On-Balance Volume
         df["obv"] = (np.sign(df["close"].diff()) * df["volume"]).fillna(0).cumsum()
         df["obv_ema"] = df["obv"].ewm(span=20).mean()
+
+        # VWAP
+        df["vwap"] = (df["volume"] * (df["high"] + df["low"] + df["close"]) / 3).cumsum() / df["volume"].cumsum()
+        df["vwap_distance"] = (df["close"] - df["vwap"]) / df["vwap"] * 100
+
+        # MFI (Money Flow Index)
+        typical_price = (df["high"] + df["low"] + df["close"]) / 3
+        raw_money_flow = typical_price * df["volume"]
+        positive_flow = raw_money_flow.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
+        negative_flow = raw_money_flow.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+        mfi_ratio = positive_flow / negative_flow
+        df["mfi"] = 100 - (100 / (1 + mfi_ratio))
+
+        # ADL (Accumulation/Distribution Line)
+        clv = ((df["close"] - df["low"]) - (df["high"] - df["close"])) / (df["high"] - df["low"])
+        df["adl"] = (clv * df["volume"]).fillna(0).cumsum()
+        df["adl_ema"] = df["adl"].ewm(span=20).mean()
+
+        # Market Structure
+        df["hh"] = (df["high"] > df["high"].shift(1)).astype(int)
+        df["ll"] = (df["low"] < df["low"].shift(1)).astype(int)
+        df["market_structure"] = df["hh"] - df["ll"]
+
+        # Pivot Points
+        df["pivot"] = (df["high"].shift(1) + df["low"].shift(1) + df["close"].shift(1)) / 3
+        df["r1"] = 2 * df["pivot"] - df["low"].shift(1)
+        df["s1"] = 2 * df["pivot"] - df["high"].shift(1)
+
+        # Volatility Regime
+        atr_pct_quantiles = df["atr_pct"].quantile([0.33, 0.67])
+        try:
+            df["vol_regime_numeric"] = pd.cut(
+                df["atr_pct"],
+                bins=[-np.inf, atr_pct_quantiles.iloc[0], atr_pct_quantiles.iloc[1], np.inf],
+                labels=[0, 1, 2],
+                duplicates='drop'
+            )
+            df["vol_regime_numeric"] = df["vol_regime_numeric"].fillna(1).astype(int)
+        except ValueError:
+            # If bins are duplicate (constant data), use default value
+            df["vol_regime_numeric"] = 1
+
+        # ADX (Average Directional Index)
+        plus_dm = df["high"].diff()
+        minus_dm = -df["low"].diff()
+        plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0)
+        minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0)
+        df["plus_dm"] = plus_dm.rolling(14).mean()
+        df["minus_dm"] = minus_dm.rolling(14).mean()
+        df["plus_di"] = 100 * df["plus_dm"] / df["atr_14"]
+        df["minus_di"] = 100 * df["minus_dm"] / df["atr_14"]
+        df["dx"] = 100 * abs(df["plus_di"] - df["minus_di"]) / (df["plus_di"] + df["minus_di"])
+        df["adx"] = df["dx"].rolling(14).mean()
 
         # === INSTITUTIONAL INDICATORS ===
         df = calculate_institutional_composite(df)

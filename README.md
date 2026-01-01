@@ -27,7 +27,7 @@ Advanced 24/7 automated trading bot for Binance Futures with machine learning, r
 ### Trading Modes (HYBRID!)
 
 - 🔥 **SCALP MODE** (confidence ≥80%): 1.5% TP, 0.75% SL, 15-30min hold
-- ⭐ **SWING MODE** (confidence 70-80%): 4% TP, 2% SL, 6-24hr hold  
+- ⭐ **SWING MODE** (confidence 70-80%): 4% TP, 2% SL, 6-24hr hold
 - ⏸️ **SKIP** (confidence <70%): No entry, wait for better setup
 
 ### Risk Management
@@ -243,13 +243,13 @@ Bot will display ALL signals and execute only profitable ones!
 
 ### Risk-Adjusted Estimates
 
-| Leverage | Monthly ROI | Max Drawdown | Risk Level    |
-| -------- | ----------- | ------------ | ------------- |
-| 1x       | 10-15%      | -5%          | ⬜ Very Low   |
-| 3x       | 30-45%      | -15%         | 🟢 Low        |
-| 5x       | 50-75%      | -25%         | 🟡 Moderate   |
-| 10x      | 100-150%    | -50%         | 🟠 High       |
-| 20x      | 200-300%    | -100%+       | 🔴 Extreme    |
+| Leverage | Monthly ROI | Max Drawdown | Risk Level  |
+| -------- | ----------- | ------------ | ----------- |
+| 1x       | 10-15%      | -5%          | ⬜ Very Low |
+| 3x       | 30-45%      | -15%         | 🟢 Low      |
+| 5x       | 50-75%      | -25%         | 🟡 Moderate |
+| 10x      | 100-150%    | -50%         | 🟠 High     |
+| 20x      | 200-300%    | -100%+       | 🔴 Extreme  |
 
 **Important Notes:**
 

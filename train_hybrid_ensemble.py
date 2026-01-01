@@ -172,30 +172,30 @@ def create_target(df, forward_periods=6):
 def cross_validate_model(X, y, model, n_splits=5):
     """Time-series cross-validation"""
     print(f"\n[CV] Running {n_splits}-fold time-series cross-validation...")
-    
+
     tscv = TimeSeriesSplit(n_splits=n_splits)
     cv_scores = []
-    
+
     for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
         X_train_cv, X_val_cv = X[train_idx], X[val_idx]
         y_train_cv, y_val_cv = y[train_idx], y[val_idx]
-        
+
         model.fit(X_train_cv, y_train_cv)
         score = model.score(X_val_cv, y_val_cv)
         cv_scores.append(score)
         print(f"  Fold {fold}: {score*100:.2f}%")
-    
+
     mean_score = np.mean(cv_scores)
     std_score = np.std(cv_scores)
-    
+
     print(f"\n  CV Mean: {mean_score*100:.2f}%")
     print(f"  CV Std: {std_score*100:.2f}%")
-    
+
     if std_score > 0.05:
         print(f"  ⚠️ HIGH VARIANCE - Model may be overfitting!")
     else:
         print(f"  ✅ LOW VARIANCE - Model is stable!")
-    
+
     return mean_score, std_score
 
 
@@ -205,20 +205,20 @@ def cross_validate_model(X, y, model, n_splits=5):
 def select_best_features(X, y, feature_names, k=TOP_FEATURES):
     """Select top K most predictive features"""
     print(f"\n[FEATURE SELECTION] Selecting top {k} features...")
-    
+
     selector = SelectKBest(f_classif, k=k)
     X_selected = selector.fit_transform(X, y)
-    
+
     # Get selected feature names
     feature_mask = selector.get_support()
     selected_features = [f for f, m in zip(feature_names, feature_mask) if m]
-    
+
     print(f"  ✓ Selected {len(selected_features)} features:")
     for i, feat in enumerate(selected_features[:15], 1):
         print(f"    {i}. {feat}")
     if len(selected_features) > 15:
         print(f"    ... and {len(selected_features)-15} more")
-    
+
     return X_selected, selected_features, selector
 
 
@@ -230,22 +230,22 @@ def train_single_model(X, y, feature_names, model_name, use_cv=True):
     print(f"\n{'='*80}")
     print(f" TRAINING {model_name}")
     print(f"{'='*80}")
-    
+
     # Feature selection
     X_selected, selected_features, selector = select_best_features(X, y, feature_names)
-    
+
     # Scale features
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X_selected)
-    
+
     # Train/test split (time-aware)
     split_idx = int(len(X_scaled) * (1 - TRAIN_TEST_SPLIT))
     X_train, X_test = X_scaled[:split_idx], X_scaled[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
-    
+
     print(f"  Train samples: {len(X_train)}")
     print(f"  Test samples: {len(X_test)}")
-    
+
     # LightGBM with STRONG regularization
     model = LGBMClassifier(
         n_estimators=200,
@@ -259,42 +259,43 @@ def train_single_model(X, y, feature_names, model_name, use_cv=True):
         reg_lambda=2.0,  # L2 regularization
         random_state=42,
         verbose=-1,
-        class_weight="balanced"
+        class_weight="balanced",
     )
-    
+
     # Cross-validation (optional)
     if use_cv:
         cv_mean, cv_std = cross_validate_model(X_scaled, y, model, n_splits=5)
-    
+
     # Final training
     model.fit(X_train, y_train)
-    
+
     # Evaluate
     y_pred_train = model.predict(X_train)
     y_pred_test = model.predict(X_test)
     y_pred_proba = model.predict_proba(X_test)[:, 1]
-    
+
     train_acc = accuracy_score(y_train, y_pred_train)
     test_acc = accuracy_score(y_test, y_pred_test)
     roc_auc = roc_auc_score(y_test, y_pred_proba)
-    
+
     overfitting_gap = train_acc - test_acc
-    
+
     print(f"\n[RESULTS {model_name}]")
     print(f"  Train Accuracy: {train_acc*100:.2f}%")
     print(f"  Test Accuracy: {test_acc*100:.2f}%")
-    print(f"  Overfitting Gap: {overfitting_gap*100:.2f}% {'✅' if overfitting_gap < 0.15 else '⚠️'}")
+    print(
+        f"  Overfitting Gap: {overfitting_gap*100:.2f}% {'✅' if overfitting_gap < 0.15 else '⚠️'}"
+    )
     print(f"  ROC-AUC: {roc_auc:.4f}")
-    
+
     # Feature importance
-    feature_importance = pd.DataFrame({
-        "feature": selected_features,
-        "importance": model.feature_importances_
-    }).sort_values("importance", ascending=False)
-    
+    feature_importance = pd.DataFrame(
+        {"feature": selected_features, "importance": model.feature_importances_}
+    ).sort_values("importance", ascending=False)
+
     print(f"\n[TOP 10 FEATURES]")
     print(feature_importance.head(10).to_string(index=False))
-    
+
     return model, scaler, selector, test_acc, roc_auc, selected_features
 
 
@@ -303,14 +304,14 @@ def train_single_model(X, y, feature_names, model_name, use_cv=True):
 # ============================================================================
 def main():
     """Main training pipeline"""
-    
+
     # ========================================================================
     # STEP 1: Fetch data for both models
     # ========================================================================
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(" STEP 1: DATA COLLECTION")
-    print("="*80)
-    
+    print("=" * 80)
+
     # Long-term model data (6 months)
     long_term_data = {}
     for symbol in SYMBOLS:
@@ -318,7 +319,7 @@ def main():
         df = add_advanced_features(df)
         df = create_target(df)
         long_term_data[symbol] = df
-    
+
     # Short-term model data (30 days)
     short_term_data = {}
     for symbol in SYMBOLS:
@@ -326,92 +327,111 @@ def main():
         df = add_advanced_features(df)
         df = create_target(df)
         short_term_data[symbol] = df
-    
+
     # ========================================================================
     # STEP 2: Combine data
     # ========================================================================
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(" STEP 2: DATA PREPARATION")
-    print("="*80)
-    
+    print("=" * 80)
+
     # Long-term combined
     long_dfs = []
     for symbol, df in long_term_data.items():
         df["symbol"] = symbol
         long_dfs.append(df)
     long_combined = pd.concat(long_dfs, ignore_index=True)
-    
+
     # Short-term combined
     short_dfs = []
     for symbol, df in short_term_data.items():
         df["symbol"] = symbol
         short_dfs.append(df)
     short_combined = pd.concat(short_dfs, ignore_index=True)
-    
+
     # Clean data
     for df in [long_combined, short_combined]:
         df.replace([np.inf, -np.inf], np.nan, inplace=True)
         df.dropna(inplace=True)
-    
+
     # Feature columns
-    exclude_cols = ["timestamp", "open", "high", "low", "close", "volume", 
-                    "future_return", "target", "symbol"]
+    exclude_cols = [
+        "timestamp",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "future_return",
+        "target",
+        "symbol",
+    ]
     feature_cols = [col for col in long_combined.columns if col not in exclude_cols]
-    
+
     print(f"  Long-term samples: {len(long_combined)}")
     print(f"  Short-term samples: {len(short_combined)}")
     print(f"  Total features: {len(feature_cols)}")
-    
+
     # Prepare X, y
     X_long = long_combined[feature_cols].values
     y_long = long_combined["target"].values
-    
+
     X_short = short_combined[feature_cols].values
     y_short = short_combined["target"].values
-    
+
     # ========================================================================
     # STEP 3: Train LONG-TERM model (6 months, 70% weight)
     # ========================================================================
-    model_long, scaler_long, selector_long, acc_long, auc_long, features_long = \
+    model_long, scaler_long, selector_long, acc_long, auc_long, features_long = (
         train_single_model(X_long, y_long, feature_cols, "LONG-TERM (6M)", use_cv=True)
-    
+    )
+
     # ========================================================================
     # STEP 4: Train SHORT-TERM model (30 days, 30% weight)
     # ========================================================================
-    model_short, scaler_short, selector_short, acc_short, auc_short, features_short = \
-        train_single_model(X_short, y_short, feature_cols, "SHORT-TERM (30D)", use_cv=True)
-    
+    model_short, scaler_short, selector_short, acc_short, auc_short, features_short = (
+        train_single_model(
+            X_short, y_short, feature_cols, "SHORT-TERM (30D)", use_cv=True
+        )
+    )
+
     # ========================================================================
     # STEP 5: Save ensemble models
     # ========================================================================
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    
-    print("\n" + "="*80)
+
+    print("\n" + "=" * 80)
     print(" STEP 5: SAVING ENSEMBLE MODELS")
-    print("="*80)
-    
+    print("=" * 80)
+
     # Save long-term model
     model_path_long = f"models/ensemble_long_term_{timestamp}.pkl"
     with open(model_path_long, "wb") as f:
-        pickle.dump({
-            "model": model_long,
-            "scaler": scaler_long,
-            "selector": selector_long,
-            "features": features_long
-        }, f)
+        pickle.dump(
+            {
+                "model": model_long,
+                "scaler": scaler_long,
+                "selector": selector_long,
+                "features": features_long,
+            },
+            f,
+        )
     print(f"  ✓ Long-term model saved: {model_path_long}")
-    
+
     # Save short-term model
     model_path_short = f"models/ensemble_short_term_{timestamp}.pkl"
     with open(model_path_short, "wb") as f:
-        pickle.dump({
-            "model": model_short,
-            "scaler": scaler_short,
-            "selector": selector_short,
-            "features": features_short
-        }, f)
+        pickle.dump(
+            {
+                "model": model_short,
+                "scaler": scaler_short,
+                "selector": selector_short,
+                "features": features_short,
+            },
+            f,
+        )
     print(f"  ✓ Short-term model saved: {model_path_short}")
-    
+
     # Save metadata
     metadata = {
         "timestamp": timestamp,
@@ -421,7 +441,7 @@ def main():
             "roc_auc": float(auc_long),
             "features": features_long,
             "model_path": model_path_long,
-            "weight": 0.7
+            "weight": 0.7,
         },
         "short_term": {
             "lookback_days": LOOKBACK_DAYS_SHORT,
@@ -429,38 +449,40 @@ def main():
             "roc_auc": float(auc_short),
             "features": features_short,
             "model_path": model_path_short,
-            "weight": 0.3
+            "weight": 0.3,
         },
         "ensemble": {
             "weighted_accuracy": float(acc_long * 0.7 + acc_short * 0.3),
-            "weighted_auc": float(auc_long * 0.7 + auc_short * 0.3)
+            "weighted_auc": float(auc_long * 0.7 + auc_short * 0.3),
         },
         "symbols": SYMBOLS,
-        "timeframe": TIMEFRAME
+        "timeframe": TIMEFRAME,
     }
-    
+
     metadata_path = f"models/ensemble_metadata_{timestamp}.json"
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=2)
     print(f"  ✓ Metadata saved: {metadata_path}")
-    
+
     # ========================================================================
     # FINAL SUMMARY
     # ========================================================================
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(" ✅ TRAINING COMPLETE - HYBRID ENSEMBLE MODEL")
-    print("="*80)
+    print("=" * 80)
     print(f"\n📊 ENSEMBLE PERFORMANCE:")
     print(f"  Long-term (70%): {acc_long*100:.2f}% accuracy, {auc_long:.4f} AUC")
     print(f"  Short-term (30%): {acc_short*100:.2f}% accuracy, {auc_short:.4f} AUC")
-    print(f"  Weighted Ensemble: {metadata['ensemble']['weighted_accuracy']*100:.2f}% accuracy")
+    print(
+        f"  Weighted Ensemble: {metadata['ensemble']['weighted_accuracy']*100:.2f}% accuracy"
+    )
     print(f"\n🎯 USAGE:")
     print(f"  prediction = (long_pred * 0.7) + (short_pred * 0.3)")
     print(f"\n📁 FILES:")
     print(f"  {model_path_long}")
     print(f"  {model_path_short}")
     print(f"  {metadata_path}")
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,12 @@
 """
-Institutional-Grade Model Training
+Institutional-Grade Model Training - HYBRID ENSEMBLE
 Advanced features for professional trading
 - Multi-timeframe analysis
-- Advanced technical indicators
-- Market regime detection
-- Volatility clustering
-- Smart money indicators
+- Institutional indicators (order flow, market structure)
+- Ensemble models (long-term + short-term)
+- Cross-validation (TimeSeriesSplit)
+- Feature selection (SelectKBest)
+- Walk-forward testing
 """
 
 import pandas as pd
@@ -16,20 +17,30 @@ import warnings
 import pickle
 import json
 from lightgbm import LGBMClassifier
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, TimeSeriesSplit
 from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectKBest, f_classif
+import sys
+import os
+
+# Add utils to path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from utils.indicators import calculate_institutional_composite
 
 warnings.filterwarnings("ignore")
 
-# Configuration
+# Configuration - HYBRID ENSEMBLE
 SYMBOLS = ["BTC/USDC", "ETH/USDC"]
 TIMEFRAME = "1h"
-LOOKBACK_DAYS = 70  # 70 days - balance between speed & quality
+LOOKBACK_DAYS_LONG = 180  # 6 months for long-term model
+LOOKBACK_DAYS_SHORT = 30  # 30 days for short-term model
 TRAIN_TEST_SPLIT = 0.2
+TOP_FEATURES = 35  # Select best 35 features (reduced from all)
 
 print("=" * 80)
-print(" [INSTITUTIONAL MODEL] - Advanced Trading System Training")
+print(" [HYBRID ENSEMBLE] - Dual-Model Training System")
+print(" Long-term (6 months) + Short-term (30 days)")
 print("=" * 80)
 
 # Initialize exchange

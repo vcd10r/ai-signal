@@ -1236,7 +1236,10 @@ class InstitutionalTradingBot:
     def set_server_side_orders(
         self, symbol, side, amount, stop_loss_price, take_profit_price
     ):
-        """Set Stop Loss and Take Profit orders on Binance server"""
+        """
+        Set Stop Loss and Take Profit orders on Binance server with OCO behavior
+        Using closePosition=true to ensure when one hits, the other auto-cancels
+        """
         try:
             # For LONG position: SL sell below entry, TP sell above entry
             # For SHORT position: SL buy above entry, TP buy below entry
@@ -1251,9 +1254,10 @@ class InstitutionalTradingBot:
                     params={
                         "stopPrice": stop_loss_price,
                         "reduceOnly": True,  # Only close position, don't open new
+                        "closePosition": True,  # Close entire position (auto-cancel other orders)
                     },
                 )
-                logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f}")
+                logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f} (closePosition=true)")
 
                 # Take Profit: TAKE_PROFIT_MARKET sell order
                 tp_order = self.exchange.create_order(
@@ -1261,10 +1265,14 @@ class InstitutionalTradingBot:
                     type="TAKE_PROFIT_MARKET",
                     side="sell",
                     amount=amount,
-                    params={"stopPrice": take_profit_price, "reduceOnly": True},
+                    params={
+                        "stopPrice": take_profit_price,
+                        "reduceOnly": True,
+                        "closePosition": True,  # Close entire position (auto-cancel other orders)
+                    },
                 )
                 logger.info(
-                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f}"
+                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f} (closePosition=true)"
                 )
 
             else:  # SHORT
@@ -1274,9 +1282,13 @@ class InstitutionalTradingBot:
                     type="STOP_MARKET",
                     side="buy",
                     amount=amount,
-                    params={"stopPrice": stop_loss_price, "reduceOnly": True},
+                    params={
+                        "stopPrice": stop_loss_price,
+                        "reduceOnly": True,
+                        "closePosition": True,  # Close entire position (auto-cancel other orders)
+                    },
                 )
-                logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f}")
+                logger.info(f"[SL ORDER] Set STOP MARKET @ ${stop_loss_price:.2f} (closePosition=true)")
 
                 # Take Profit: TAKE_PROFIT_MARKET buy order
                 tp_order = self.exchange.create_order(
@@ -1284,13 +1296,18 @@ class InstitutionalTradingBot:
                     type="TAKE_PROFIT_MARKET",
                     side="buy",
                     amount=amount,
-                    params={"stopPrice": take_profit_price, "reduceOnly": True},
+                    params={
+                        "stopPrice": take_profit_price,
+                        "reduceOnly": True,
+                        "closePosition": True,  # Close entire position (auto-cancel other orders)
+                    },
                 )
                 logger.info(
-                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f}"
+                    f"[TP ORDER] Set TAKE PROFIT MARKET @ ${take_profit_price:.2f} (closePosition=true)"
                 )
 
-            logger.info(f"[SERVER PROTECTION] ✅ SL/TP orders set on Binance server")
+            logger.info(f"[SERVER PROTECTION] ✅ SL/TP orders LINKED (OCO-like behavior)")
+            logger.info(f"  💡 When TP hits → SL auto-cancels | When SL hits → TP auto-cancels")
             return True
 
         except Exception as e:

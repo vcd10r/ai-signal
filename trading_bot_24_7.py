@@ -1353,15 +1353,34 @@ class InstitutionalTradingBot:
                     return False
                     
             except Exception as e:
-                logger.error(f"[ERROR] Failed to verify position: {e}\")\n                # Still track locally but mark as unverified\n                logger.warning(f"[WARNING] Tracking position locally without verification")
+                logger.error(f"[ERROR] Failed to verify position: {e}")
+                # Still track locally but mark as unverified
+                logger.warning(f"[WARNING] Tracking position locally without verification")
             
-            # Track position with order ID
+            # Calculate ACTUAL TP/SL based on FILLED PRICE (not predicted price)
+            # This ensures TP/SL are "lengket" (sticky) with actual entry
+            logger.info(f"\n[TP/SL CALC] Calculating based on actual filled price...")
+            
+            if side == "LONG":
+                actual_stop_loss = filled_price * (1 - STOP_LOSS_PCT)
+                actual_take_profit = filled_price * (1 + TAKE_PROFIT_PCT)
+                logger.info(f"  LONG Entry: ${filled_price:.2f}")
+                logger.info(f"  Stop Loss: ${actual_stop_loss:.2f} (-{STOP_LOSS_PCT*100}%)")
+                logger.info(f"  Take Profit: ${actual_take_profit:.2f} (+{TAKE_PROFIT_PCT*100}%)")
+            else:  # SHORT
+                actual_stop_loss = filled_price * (1 + STOP_LOSS_PCT)
+                actual_take_profit = filled_price * (1 - TAKE_PROFIT_PCT)
+                logger.info(f"  SHORT Entry: ${filled_price:.2f}")
+                logger.info(f"  Stop Loss: ${actual_stop_loss:.2f} (+{STOP_LOSS_PCT*100}%)")
+                logger.info(f"  Take Profit: ${actual_take_profit:.2f} (-{TAKE_PROFIT_PCT*100}%)")
+            
+            # Track position with ACTUAL TP/SL prices
             self.positions[symbol] = {
                 "side": side,
                 "entry_price": filled_price,
                 "amount": float(filled_amount),
-                "stop_loss": signal["stop_loss"],
-                "take_profit": signal["take_profit"],
+                "stop_loss": actual_stop_loss,
+                "take_profit": actual_take_profit,
                 "opened_at": datetime.now(),
                 "confidence": signal["confidence"],
                 "order_id": order.get('id', 'N/A'),
@@ -1372,15 +1391,16 @@ class InstitutionalTradingBot:
             # Reset failed attempts on success
             self.failed_attempts[symbol] = 0
 
-            # Set SL/TP orders on Binance server for protection - CRITICAL!
-            logger.info(f"\n[PROTECTION] Setting server-side SL/TP orders...")
+            # Set SL/TP orders on Binance server IMMEDIATELY - LENGKET dengan entry!
+            logger.info(f"\n[PROTECTION] Setting server-side SL/TP orders IMMEDIATELY...")
+            logger.info(f"  Using ACTUAL filled price: ${filled_price:.2f}")
             try:
                 sl_tp_success = self.set_server_side_orders(
                     symbol,
                     side,
-                    float(amount),
-                    signal["stop_loss"],
-                    signal["take_profit"],
+                    float(filled_amount),  # Use actual filled amount
+                    actual_stop_loss,       # Use calculated SL from filled price
+                    actual_take_profit,     # Use calculated TP from filled price
                 )
 
                 if not sl_tp_success:
@@ -1391,15 +1411,17 @@ class InstitutionalTradingBot:
                     # Close position immediately if SL/TP failed
                     try:
                         if side == "LONG":
-                            self.exchange.create_market_sell_order(symbol, amount)
+                            self.exchange.create_market_sell_order(symbol, filled_amount)
                         else:
-                            self.exchange.create_market_buy_order(symbol, amount)
+                            self.exchange.create_market_buy_order(symbol, filled_amount)
                         logger.info(f"[SAFETY] Position closed - SL/TP setup failed")
+                        # Remove from tracking
+                        del self.positions[symbol]
                     except Exception as close_err:
                         logger.error(f"[ERROR] Could not close position: {close_err}")
                     return False
 
-                logger.info(f"[PROTECTION] ✅ SL/TP orders successfully set!")
+                logger.info(f"[PROTECTION] ✅ SL/TP orders successfully set and LINKED to entry!")
 
             except Exception as e:
                 logger.error(f"[CRITICAL] Exception setting SL/TP: {e}")
@@ -1407,10 +1429,12 @@ class InstitutionalTradingBot:
                 # Close position immediately if exception occurred
                 try:
                     if side == "LONG":
-                        self.exchange.create_market_sell_order(symbol, amount)
+                        self.exchange.create_market_sell_order(symbol, filled_amount)
                     else:
-                        self.exchange.create_market_buy_order(symbol, amount)
+                        self.exchange.create_market_buy_order(symbol, filled_amount)
                     logger.info(f"[SAFETY] Position closed - SL/TP setup failed")
+                    # Remove from tracking
+                    del self.positions[symbol]
                 except Exception as close_err:
                     logger.error(f"[ERROR] Could not close position: {close_err}")
                 return False
@@ -1418,6 +1442,7 @@ class InstitutionalTradingBot:
             logger.info(
                 f"[SUCCESS] Position opened: {side} {symbol} with SL/TP protection"
             )
+            logger.info(f"[TP/SL] Prices calculated from actual fill: ${filled_price:.2f}")
             logger.info(f"[COOLDOWN] Next trade for {symbol} allowed after 5 minutes")
 
             return True

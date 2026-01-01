@@ -1155,7 +1155,7 @@ class InstitutionalTradingBot:
             # ANTI-SPAM: Check if position already exists
             if symbol in self.positions:
                 logger.warning(f"[ANTI-SPAM] Position already exists for {symbol}")
-                logger.warning(f"  Current: {self.positions[symbol]['side']} @ ${self.positions[symbol]['entry_price']:.2f}\")"
+                logger.warning(f"  Current: {self.positions[symbol]['side']} @ ${self.positions[symbol]['entry_price']:.2f}")
                 return False
             
             # ANTI-SPAM: Check recent trade cooldown

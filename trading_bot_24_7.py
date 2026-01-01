@@ -387,6 +387,12 @@ class InstitutionalTradingBot:
             total_usdc = balance["total"].get("USDC", 0)
             free_usdc = balance["free"].get("USDC", 0)
 
+            # Safety check for zero balance
+            if total_usdc <= 0:
+                logger.warning(f"[WARNING] No USDC balance found or balance is zero")
+                logger.info(f"[BALANCE] Total: ${total_usdc:.2f}, Free: ${free_usdc:.2f}")
+                return
+
             # Set initial balance on first call
             if self.initial_balance == 0.0:
                 self.initial_balance = total_usdc

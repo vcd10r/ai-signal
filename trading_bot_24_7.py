@@ -22,6 +22,8 @@ import pickle
 import json
 import time
 import logging
+from logging.handlers import TimedRotatingFileHandler
+import glob
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -29,7 +31,7 @@ import sys
 import traceback
 import sqlite3
 import csv
-import os
+from utils.indicators import calculate_institutional_composite
 
 
 # First-time setup function
@@ -130,19 +132,64 @@ try:
 except ImportError:
     from config import *
 
-# Setup logging with UTF-8 encoding
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
+# Setup logging with AUTO-ROTATION (7 days, keep 14 days backup)
+def setup_logging_with_rotation():
+    """Setup logging dengan auto-rotation 7 hari"""
+    log_dir = os.path.dirname(os.path.abspath(__file__))
+    log_file = os.path.join(log_dir, LOG_FILE)
+    
+    # Create rotating file handler (rotate setiap 7 hari, keep 2 backup)
+    handler = TimedRotatingFileHandler(
+        log_file,
+        when='D',        # Daily
+        interval=7,      # Every 7 days
+        backupCount=2,   # Keep 2 old log files (2 weeks backup)
+        encoding='utf-8'
+    )
+    handler.suffix = "%Y%m%d"  # Suffix: trading_bot_24_7.log.20251229
+    
+    # Format log messages
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    
+    # Setup logger
+    logger_root = logging.getLogger()
+    logger_root.setLevel(getattr(logging, LOG_LEVEL))
+    logger_root.addHandler(handler)
+    
+    # Also print to console
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger_root.addHandler(console_handler)
+    
+    # Cleanup old log files manually (older than 14 days)
+    cleanup_old_logs(log_dir)
+    
+    return logger_root
+
+def cleanup_old_logs(log_dir, days=14):
+    """Delete log files older than X days"""
+    import time
+    
+    log_pattern = os.path.join(log_dir, 'trading_bot_24_7.log.*')
+    current_time = time.time()
+    days_in_seconds = days * 86400
+    
+    for log_file in glob.glob(log_pattern):
+        file_age = current_time - os.path.getmtime(log_file)
+        if file_age > days_in_seconds:
+            try:
+                os.remove(log_file)
+                print(f"[CLEANUP] Deleted old log: {os.path.basename(log_file)}")
+            except Exception as e:
+                print(f"[ERROR] Could not delete {log_file}: {e}")
+
+# Initialize logging
+setup_logging_with_rotation()
+
 # Force UTF-8 for stdout
 if sys.stdout.encoding != "utf-8":
     import io
-
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 logger = logging.getLogger(__name__)
@@ -238,26 +285,72 @@ class InstitutionalTradingBot:
         logger.info(f"  Check Interval: {CHECK_INTERVAL}s\n")
 
     def load_model(self):
-        """Load latest institutional model"""
+        """Load latest model (ensemble or single)"""
         try:
-            model_files = list(Path("models").glob("institutional_model_usdc_*.pkl"))
-            if not model_files:
-                raise FileNotFoundError(
-                    "No institutional model found! Run train_institutional.py first"
-                )
-
-            latest_model = max(model_files, key=lambda x: x.stat().st_mtime)
-
-            with open(latest_model, "rb") as f:
-                model_data = pickle.load(f)
-
-            self.model = model_data["model"]
-            self.scaler = model_data["scaler"]
-            self.feature_cols = model_data["feature_cols"]
-
-            logger.info(f"[MODEL] Loaded: {latest_model.name}")
-            logger.info(f"  Test Accuracy: {model_data['test_acc']*100:.2f}%")
-            logger.info(f"  ROC-AUC: {model_data['roc_auc']:.4f}")
+            # Check for ENSEMBLE models first (preferred)
+            ensemble_metadata_files = list(Path("models").glob("ensemble_metadata_*.json"))
+            
+            if ensemble_metadata_files:
+                # Load ENSEMBLE MODELS (HYBRID SYSTEM)
+                latest_metadata = max(ensemble_metadata_files, key=lambda x: x.stat().st_mtime)
+                
+                with open(latest_metadata, "r") as f:
+                    metadata = json.load(f)
+                
+                logger.info(f"[ENSEMBLE MODEL] Loading hybrid dual-model system...")
+                
+                # Load long-term model
+                with open(metadata["long_term"]["model_path"], "rb") as f:
+                    long_data = pickle.load(f)
+                
+                # Load short-term model
+                with open(metadata["short_term"]["model_path"], "rb") as f:
+                    short_data = pickle.load(f)
+                
+                # Store ensemble components
+                self.model_long = long_data["model"]
+                self.scaler_long = long_data["scaler"]
+                self.selector_long = long_data["selector"]
+                self.features_long = long_data["features"]
+                
+                self.model_short = short_data["model"]
+                self.scaler_short = short_data["scaler"]
+                self.selector_short = short_data["selector"]
+                self.features_short = short_data["features"]
+                
+                # Weights for ensemble
+                self.weight_long = metadata["long_term"]["weight"]
+                self.weight_short = metadata["short_term"]["weight"]
+                
+                # Use ensemble mode
+                self.use_ensemble = True
+                self.feature_cols = list(set(self.features_long + self.features_short))
+                
+                logger.info(f"  ✅ Long-term (6M): {metadata['long_term']['accuracy']*100:.2f}% acc, weight={self.weight_long}")
+                logger.info(f"  ✅ Short-term (30D): {metadata['short_term']['accuracy']*100:.2f}% acc, weight={self.weight_short}")
+                logger.info(f"  🎯 Ensemble: {metadata['ensemble']['weighted_accuracy']*100:.2f}% weighted accuracy")
+                
+            else:
+                # Fallback to SINGLE MODEL
+                model_files = list(Path("models").glob("institutional_model_usdc_*.pkl"))
+                if not model_files:
+                    raise FileNotFoundError(
+                        "No model found! Run train_hybrid_ensemble.py or train_institutional.py first"
+                    )
+                
+                latest_model = max(model_files, key=lambda x: x.stat().st_mtime)
+                
+                with open(latest_model, "rb") as f:
+                    model_data = pickle.load(f)
+                
+                self.model = model_data["model"]
+                self.scaler = model_data["scaler"]
+                self.feature_cols = model_data["feature_cols"]
+                self.use_ensemble = False
+                
+                logger.info(f"[SINGLE MODEL] Loaded: {latest_model.name}")
+                logger.info(f"  Test Accuracy: {model_data['test_acc']*100:.2f}%")
+                logger.info(f"  ROC-AUC: {model_data['roc_auc']:.4f}")
 
         except Exception as e:
             logger.error(f"[ERROR] Failed to load model: {e}")
@@ -887,31 +980,68 @@ class InstitutionalTradingBot:
 
             # Extract features
             X = latest[self.feature_cols]
-            X_scaled = self.scaler.transform(X)
-
-            # Predict
-            prediction = self.model.predict(X_scaled)[0]
-            confidence = self.model.predict_proba(X_scaled)[0].max()
-            proba_all = self.model.predict_proba(X_scaled)[0]
+            
+            # ENSEMBLE PREDICTION (if using dual-model system)
+            if hasattr(self, 'use_ensemble') and self.use_ensemble:
+                # Long-term model prediction
+                X_long = X[self.features_long] if all(f in X.columns for f in self.features_long) else X
+                X_long_selected = self.selector_long.transform(X_long.values.reshape(1, -1))
+                X_long_scaled = self.scaler_long.transform(X_long_selected)
+                pred_long_proba = self.model_long.predict_proba(X_long_scaled)[0]
+                
+                # Short-term model prediction
+                X_short = X[self.features_short] if all(f in X.columns for f in self.features_short) else X
+                X_short_selected = self.selector_short.transform(X_short.values.reshape(1, -1))
+                X_short_scaled = self.scaler_short.transform(X_short_selected)
+                pred_short_proba = self.model_short.predict_proba(X_short_scaled)[0]
+                
+                # Weighted ensemble (70% long + 30% short)
+                proba_all = (pred_long_proba * self.weight_long) + (pred_short_proba * self.weight_short)
+                prediction = 1 if proba_all[1] > proba_all[0] else 0
+                confidence = proba_all.max()
+                
+            else:
+                # SINGLE MODEL prediction (fallback)
+                X_scaled = self.scaler.transform(X)
+                prediction = self.model.predict(X_scaled)[0]
+                confidence = self.model.predict_proba(X_scaled)[0].max()
+                proba_all = self.model.predict_proba(X_scaled)[0]
 
             current_price = latest["close"].values[0]
             atr = latest["atr_14"].values[0]
 
-            # Determine status and executability
-            if confidence < MIN_CONFIDENCE:  # Below threshold
+            # HYBRID SCALP/SWING MODE
+            # >80% confidence = SCALP (1.5% TP, 0.75% SL, quick in/out)
+            # 70-80% confidence = SWING (4% TP, 2% SL, hold longer)
+            # <70% confidence = SKIP (below threshold)
+            
+            if confidence >= 0.80:  # 🔥 SCALP MODE (HIGH CONFIDENCE)
+                status = "🔥 SCALP"
+                action_type = "LONG" if prediction == 1 else "SHORT"
+                reason = f"Scalp mode ({confidence*100:.1f}%) {action_type}"
+                executable = True
+                trade_mode = "SCALP"
+                # Aggressive TP/SL for scalping
+                tp_pct = 0.015  # 1.5% TP
+                sl_pct = 0.0075  # 0.75% SL
+                
+            elif confidence >= MIN_CONFIDENCE:  # ⭐ SWING MODE (MEDIUM-HIGH CONFIDENCE)
+                status = "⭐ SWING"
+                action_type = "LONG" if prediction == 1 else "SHORT"
+                reason = f"Swing mode ({confidence*100:.1f}%) {action_type}"
+                executable = True
+                trade_mode = "SWING"
+                # Standard TP/SL for swing
+                tp_pct = TAKE_PROFIT_PCT  # 4% TP
+                sl_pct = STOP_LOSS_PCT  # 2% SL
+                
+            else:  # ⏸️ SKIP (LOW CONFIDENCE)
                 status = "⏸️ SKIP"
                 reason = f"Low confidence ({confidence*100:.1f}% < {MIN_CONFIDENCE*100:.0f}%)"
                 executable = False
-            elif confidence >= 0.65:  # High priority
-                status = "⭐ HIGH PRIORITY"
-                action_type = "LONG" if prediction == 1 else "SHORT"
-                reason = f"High confidence ({confidence*100:.1f}%) {action_type}"
-                executable = True
-            else:  # Standard entry (40-64%)
-                status = "🔥 ENTRY"
-                action_type = "LONG" if prediction == 1 else "SHORT"
-                reason = f"Standard confidence ({confidence*100:.1f}%) {action_type}"
-                executable = True
+                trade_mode = "NONE"
+                tp_pct = TAKE_PROFIT_PCT
+                sl_pct = STOP_LOSS_PCT
 
             # Check multi-timeframe alignment for executable signals (only for LONG)
             mtf = {
@@ -927,7 +1057,7 @@ class InstitutionalTradingBot:
                     reason = f"MTF not aligned (1H: {mtf['trend_1h']}, 4H: {mtf['trend_4h']})"
                     executable = False
 
-            # Return complete signal data
+            # Return complete signal data with HYBRID mode
             return {
                 "symbol": symbol,
                 "action": "BUY" if prediction == 1 else "SELL",
@@ -939,15 +1069,16 @@ class InstitutionalTradingBot:
                 "status": status,
                 "reason": reason,
                 "executable": executable,
+                "trade_mode": trade_mode,  # NEW: SCALP or SWING
                 "stop_loss": (
-                    current_price * (1 - STOP_LOSS_PCT)
+                    current_price * (1 - sl_pct)
                     if prediction == 1
-                    else current_price * (1 + STOP_LOSS_PCT)
+                    else current_price * (1 + sl_pct)
                 ),
                 "take_profit": (
-                    current_price * (1 + TAKE_PROFIT_PCT)
+                    current_price * (1 + tp_pct)
                     if prediction == 1
-                    else current_price * (1 - TAKE_PROFIT_PCT)
+                    else current_price * (1 - tp_pct)
                 ),
                 "atr": atr,
                 "mtf_1h": mtf["trend_1h"],
@@ -993,7 +1124,9 @@ class InstitutionalTradingBot:
             logger.info(f"  Open Positions: {len(self.positions)}")
             if self.positions:
                 for sym, pos in self.positions.items():
-                    logger.info(f"    - {pos['side']} {sym}: ${pos['entry_price']:.2f} x {pos['amount']}")
+                    logger.info(
+                        f"    - {pos['side']} {sym}: ${pos['entry_price']:.2f} x {pos['amount']}"
+                    )
 
             # SAFETY CHECK: Validate sufficient margin before opening position
             margin_with_buffer = margin_needed * 1.05  # 5% buffer for fees/slippage
@@ -1002,23 +1135,37 @@ class InstitutionalTradingBot:
                 # Check if we can reduce position size to fit available margin
                 max_margin_available = free_balance * 0.95  # Use 95% of free balance
                 max_position_size = max_margin_available * self.leverage
-                
+
                 # Only auto-adjust if we can get at least 50% of intended position
                 if max_position_size >= (position_size * 0.5):
-                    logger.warning(f"\n⚠️ [AUTO-ADJUST] Insufficient margin for full position")
-                    logger.warning(f"  Intended: ${position_size:,.2f} → ${margin_needed:,.2f} margin")
-                    logger.warning(f"  Adjusted: ${max_position_size:,.2f} → ${max_margin_available:,.2f} margin")
-                    logger.warning(f"  Using {max_position_size/position_size*100:.0f}% of intended size")
-                    
+                    logger.warning(
+                        f"\n⚠️ [AUTO-ADJUST] Insufficient margin for full position"
+                    )
+                    logger.warning(
+                        f"  Intended: ${position_size:,.2f} → ${margin_needed:,.2f} margin"
+                    )
+                    logger.warning(
+                        f"  Adjusted: ${max_position_size:,.2f} → ${max_margin_available:,.2f} margin"
+                    )
+                    logger.warning(
+                        f"  Using {max_position_size/position_size*100:.0f}% of intended size"
+                    )
+
                     # Update position size and margin
                     position_size = max_position_size
                     margin_needed = max_margin_available
                 else:
                     logger.warning(f"\n⏸️ [SKIPPED] Insufficient margin for {symbol}")
-                    logger.warning(f"  Signal: {signal['confidence']*100:.1f}% confidence {side}")
-                    logger.warning(f"  Required: ${margin_with_buffer:,.2f} (margin with 5% buffer)")
+                    logger.warning(
+                        f"  Signal: {signal['confidence']*100:.1f}% confidence {side}"
+                    )
+                    logger.warning(
+                        f"  Required: ${margin_with_buffer:,.2f} (margin with 5% buffer)"
+                    )
                     logger.warning(f"  Available: ${free_balance:,.2f} (free balance)")
-                    logger.warning(f"  Shortfall: ${margin_with_buffer - free_balance:,.2f}")
+                    logger.warning(
+                        f"  Shortfall: ${margin_with_buffer - free_balance:,.2f}"
+                    )
                     logger.warning(f"  💡 Wait for existing position to close")
                     return False
 
@@ -1156,31 +1303,37 @@ class InstitutionalTradingBot:
             # Get all open orders for this symbol
             logger.info(f"[CLEANUP] Fetching open orders for {symbol}...")
             open_orders = self.exchange.fetch_open_orders(symbol)
-            
+
             if not open_orders:
                 logger.info(f"[CLEANUP] ✅ No pending orders to cancel for {symbol}")
                 return True
-            
-            logger.info(f"[CLEANUP] Found {len(open_orders)} open order(s) for {symbol}")
-            
+
+            logger.info(
+                f"[CLEANUP] Found {len(open_orders)} open order(s) for {symbol}"
+            )
+
             # Cancel each order
             cancelled_count = 0
             for order in open_orders:
                 try:
-                    order_id = order['id']
-                    order_type = order.get('type', 'UNKNOWN')
-                    order_side = order.get('side', 'UNKNOWN')
-                    
-                    logger.info(f"[CLEANUP] Cancelling {order_type} {order_side} order {order_id}...")
+                    order_id = order["id"]
+                    order_type = order.get("type", "UNKNOWN")
+                    order_side = order.get("side", "UNKNOWN")
+
+                    logger.info(
+                        f"[CLEANUP] Cancelling {order_type} {order_side} order {order_id}..."
+                    )
                     self.exchange.cancel_order(order_id, symbol)
                     logger.info(f"[CLEANUP] ✅ Cancelled {order_type} order {order_id}")
                     cancelled_count += 1
                 except Exception as e:
                     logger.error(f"[ERROR] Could not cancel order {order_id}: {e}")
-            
-            logger.info(f"[CLEANUP] ✅ Cancelled {cancelled_count}/{len(open_orders)} order(s) for {symbol}")
+
+            logger.info(
+                f"[CLEANUP] ✅ Cancelled {cancelled_count}/{len(open_orders)} order(s) for {symbol}"
+            )
             return True
-            
+
         except Exception as e:
             logger.error(f"[ERROR] Failed to cancel orders for {symbol}: {e}")
             return False
@@ -1191,7 +1344,7 @@ class InstitutionalTradingBot:
         try:
             binance_positions = self.exchange.fetch_positions()
             active_positions = {}
-            
+
             for p in binance_positions:
                 if float(p.get("contracts", 0)) > 0:
                     # Normalize symbol format (remove :USDC suffix if present)
@@ -1206,14 +1359,18 @@ class InstitutionalTradingBot:
                     logger.warning(
                         f"[SYNC] Position {symbol} closed externally. Removing from tracking."
                     )
-                    
+
                     # Cancel any pending TP/SL orders for this symbol
                     try:
-                        logger.info(f"[CLEANUP] Cancelling orphan orders for {symbol}...")
+                        logger.info(
+                            f"[CLEANUP] Cancelling orphan orders for {symbol}..."
+                        )
                         self.cancel_server_side_orders(symbol)
                     except Exception as e:
-                        logger.warning(f"[WARNING] Could not cancel orders for {symbol}: {e}")
-                    
+                        logger.warning(
+                            f"[WARNING] Could not cancel orders for {symbol}: {e}"
+                        )
+
                     del self.positions[symbol]
 
             # Add positions that exist on Binance but not in bot tracking
@@ -1338,7 +1495,9 @@ class InstitutionalTradingBot:
             # Cancel any pending SL/TP orders FIRST (before closing position)
             # This ensures cleanup happens even if close fails
             try:
-                logger.info(f"[CLEANUP] Cancelling pending TP/SL orders for {symbol}...")
+                logger.info(
+                    f"[CLEANUP] Cancelling pending TP/SL orders for {symbol}..."
+                )
                 self.cancel_server_side_orders(symbol)
             except Exception as e:
                 logger.warning(f"[WARNING] Could not cancel server-side orders: {e}")

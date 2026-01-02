@@ -1142,6 +1142,8 @@ class InstitutionalTradingBot:
                 "reason": reason,
                 "executable": executable,
                 "trade_mode": trade_mode,  # NEW: SCALP or SWING
+                "tp_pct": tp_pct,  # FIX: Include TP percentage for dynamic use
+                "sl_pct": sl_pct,  # FIX: Include SL percentage for dynamic use
                 "stop_loss": (
                     current_price * (1 - sl_pct)
                     if prediction == 1
@@ -1393,27 +1395,32 @@ class InstitutionalTradingBot:
 
             # Calculate ACTUAL TP/SL based on FILLED PRICE (not predicted price)
             # This ensures TP/SL are "lengket" (sticky) with actual entry
+            # FIX: Use dynamic TP/SL from signal (hybrid mode SCALP vs SWING)
+            tp_pct = signal.get('tp_pct', TAKE_PROFIT_PCT)  # Use signal's TP or default
+            sl_pct = signal.get('sl_pct', STOP_LOSS_PCT)    # Use signal's SL or default
+            
             logger.info(f"\n[TP/SL CALC] Calculating based on actual filled price...")
+            logger.info(f"  Mode: {signal.get('trade_mode', 'SWING')} | TP: {tp_pct*100:.2f}% | SL: {sl_pct*100:.2f}%")
 
             if side == "LONG":
-                actual_stop_loss = filled_price * (1 - STOP_LOSS_PCT)
-                actual_take_profit = filled_price * (1 + TAKE_PROFIT_PCT)
+                actual_stop_loss = filled_price * (1 - sl_pct)
+                actual_take_profit = filled_price * (1 + tp_pct)
                 logger.info(f"  LONG Entry: ${filled_price:.2f}")
                 logger.info(
-                    f"  Stop Loss: ${actual_stop_loss:.2f} (-{STOP_LOSS_PCT*100}%)"
+                    f"  Stop Loss: ${actual_stop_loss:.2f} (-{sl_pct*100}%)"
                 )
                 logger.info(
-                    f"  Take Profit: ${actual_take_profit:.2f} (+{TAKE_PROFIT_PCT*100}%)"
+                    f"  Take Profit: ${actual_take_profit:.2f} (+{tp_pct*100}%)"
                 )
             else:  # SHORT
-                actual_stop_loss = filled_price * (1 + STOP_LOSS_PCT)
-                actual_take_profit = filled_price * (1 - TAKE_PROFIT_PCT)
+                actual_stop_loss = filled_price * (1 + sl_pct)
+                actual_take_profit = filled_price * (1 - tp_pct)
                 logger.info(f"  SHORT Entry: ${filled_price:.2f}")
                 logger.info(
-                    f"  Stop Loss: ${actual_stop_loss:.2f} (+{STOP_LOSS_PCT*100}%)"
+                    f"  Stop Loss: ${actual_stop_loss:.2f} (+{sl_pct*100}%)"
                 )
                 logger.info(
-                    f"  Take Profit: ${actual_take_profit:.2f} (-{TAKE_PROFIT_PCT*100}%)"
+                    f"  Take Profit: ${actual_take_profit:.2f} (-{tp_pct*100}%)"
                 )
 
             # Track position with ACTUAL TP/SL prices
@@ -1462,6 +1469,25 @@ class InstitutionalTradingBot:
                             self.exchange.create_market_buy_order(symbol, filled_amount)
                         logger.info(f"[SAFETY] Position closed - SL/TP setup failed")
                         # Remove from tracking
+                        del self.positions[symbol]
+                    except Exception as close_err:
+                        logger.error(f"[ERROR] Could not close position: {close_err}")
+                    return False
+
+                # FIX: Verify orders actually exist on exchange
+                logger.info(f"[VERIFY] Confirming TP/SL orders on exchange...")
+                time.sleep(1)  # Wait for orders to propagate
+                
+                verified = self.verify_server_side_orders(symbol, actual_stop_loss, actual_take_profit)
+                if not verified:
+                    logger.error(f"[CRITICAL] TP/SL orders NOT FOUND on exchange!")
+                    logger.error(f"[CRITICAL] Closing position immediately for safety...")
+                    try:
+                        if side == "LONG":
+                            self.exchange.create_market_sell_order(symbol, filled_amount)
+                        else:
+                            self.exchange.create_market_buy_order(symbol, filled_amount)
+                        logger.info(f"[SAFETY] Position closed - orders not verified")
                         del self.positions[symbol]
                     except Exception as close_err:
                         logger.error(f"[ERROR] Could not close position: {close_err}")
@@ -1617,6 +1643,91 @@ class InstitutionalTradingBot:
             logger.error(f"[ERROR] Exception details: {str(e)}")
             return False
 
+    def verify_server_side_orders(self, symbol, expected_sl, expected_tp):
+        """Verify SL/TP orders exist on Binance after placement"""
+        try:
+            open_orders = self.exchange.fetch_open_orders(symbol)
+            
+            has_sl = False
+            has_tp = False
+            
+            for order in open_orders:
+                order_type = order.get('type', '')
+                stop_price = float(order.get('stopPrice', 0))
+                
+                # Check STOP_MARKET (SL)
+                if order_type == 'STOP_MARKET' and stop_price > 0:
+                    if abs(stop_price - expected_sl) < 1.0:  # Within $1
+                        has_sl = True
+                        logger.info(f"[VERIFY] ✅ SL order found: ${stop_price:.2f}")
+                
+                # Check TAKE_PROFIT_MARKET (TP)
+                elif order_type == 'TAKE_PROFIT_MARKET' and stop_price > 0:
+                    if abs(stop_price - expected_tp) < 1.0:  # Within $1
+                        has_tp = True
+                        logger.info(f"[VERIFY] ✅ TP order found: ${stop_price:.2f}")
+            
+            if has_sl and has_tp:
+                logger.info(f"[VERIFY] ✅ Both SL and TP confirmed on exchange")
+                return True
+            else:
+                logger.error(f"[VERIFY] ❌ Missing orders - SL: {has_sl}, TP: {has_tp}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"[VERIFY] Failed to verify orders: {e}")
+            return False
+
+    def update_trailing_stop(self, symbol, side, new_sl_price, amount):
+        """Update trailing SL on Binance server (not just memory)"""
+        try:
+            logger.info(f"[TRAILING] Updating SL on Binance server to ${new_sl_price:.2f}...")
+            
+            # Step 1: Cancel old SL order
+            open_orders = self.exchange.fetch_open_orders(symbol)
+            for order in open_orders:
+                if order.get('type') == 'STOP_MARKET':
+                    old_sl_price = float(order.get('stopPrice', 0))
+                    order_id = order['id']
+                    self.exchange.cancel_order(order_id, symbol)
+                    logger.info(f"[TRAILING] Cancelled old SL: ${old_sl_price:.2f} (ID: {order_id})")
+                    break
+            
+            # Step 2: Place new SL order at new trailing price
+            time.sleep(0.5)  # Brief wait after cancel
+            
+            if side == "LONG":
+                new_sl_order = self.exchange.create_order(
+                    symbol=symbol,
+                    type="STOP_MARKET",
+                    side="sell",
+                    amount=amount,
+                    params={
+                        "stopPrice": new_sl_price,
+                        "reduceOnly": True,
+                        "closePosition": True,
+                    }
+                )
+            else:  # SHORT
+                new_sl_order = self.exchange.create_order(
+                    symbol=symbol,
+                    type="STOP_MARKET",
+                    side="buy",
+                    amount=amount,
+                    params={
+                        "stopPrice": new_sl_price,
+                        "reduceOnly": True,
+                        "closePosition": True,
+                    }
+                )
+            
+            logger.info(f"[TRAILING] ✅ New SL set on server: ${new_sl_price:.2f} (ID: {new_sl_order.get('id', 'N/A')})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"[TRAILING] Failed to update SL on server: {e}")
+            return False
+
     def cancel_server_side_orders(self, symbol):
         """Cancel all open orders for a symbol (SL/TP cleanup)"""
         try:
@@ -1745,19 +1856,27 @@ class InstitutionalTradingBot:
                         trailing_sl = current_price * (1 - STOP_LOSS_PCT)
                         if trailing_sl > pos["stop_loss"]:
                             old_sl = pos["stop_loss"]
-                            pos["stop_loss"] = trailing_sl
-                            logger.info(
-                                f"[TRAILING SL] {symbol}: ${old_sl:.2f} → ${trailing_sl:.2f} (Locked {pnl_pct:.1f}% profit)"
-                            )
+                            # FIX: Update SL on Binance server, not just memory
+                            if self.update_trailing_stop(symbol, side, trailing_sl, pos["amount"]):
+                                pos["stop_loss"] = trailing_sl
+                                logger.info(
+                                    f"[TRAILING SL] {symbol}: ${old_sl:.2f} → ${trailing_sl:.2f} (Locked {pnl_pct:.1f}% profit)"
+                                )
+                            else:
+                                logger.warning(f"[TRAILING SL] Failed to update SL on server for {symbol}")
                     else:  # SHORT
                         # SHORT: New trailing SL = current price + 2%
                         trailing_sl = current_price * (1 + STOP_LOSS_PCT)
                         if trailing_sl < pos["stop_loss"]:  # Lower is better for SHORT
                             old_sl = pos["stop_loss"]
-                            pos["stop_loss"] = trailing_sl
-                            logger.info(
-                                f"[TRAILING SL] {symbol}: ${old_sl:.2f} → ${trailing_sl:.2f} (Locked {pnl_pct:.1f}% profit)"
-                            )
+                            # FIX: Update SL on Binance server, not just memory
+                            if self.update_trailing_stop(symbol, side, trailing_sl, pos["amount"]):
+                                pos["stop_loss"] = trailing_sl
+                                logger.info(
+                                    f"[TRAILING SL] {symbol}: ${old_sl:.2f} → ${trailing_sl:.2f} (Locked {pnl_pct:.1f}% profit)"
+                                )
+                            else:
+                                logger.warning(f"[TRAILING SL] Failed to update SL on server for {symbol}")
 
                 # Check stop loss and take profit (logic depends on LONG vs SHORT)
                 if side == "LONG":

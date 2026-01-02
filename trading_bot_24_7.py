@@ -386,9 +386,12 @@ class InstitutionalTradingBot:
             balance = self.exchange.fetch_balance()
             
             # DEBUG: Log what we receive from exchange
-            logger.debug(f"[DEBUG] Balance response keys: {list(balance.keys())}")
+            logger.info(f"[DEBUG] Balance response keys: {list(balance.keys())}")
             if 'total' in balance:
-                logger.debug(f"[DEBUG] Available assets in total: {list(balance['total'].keys())}")
+                logger.info(f"[DEBUG] Available assets: {list(balance['total'].keys())}")
+                # Log all non-zero assets
+                non_zero = {k: v for k, v in balance['total'].items() if v > 0}
+                logger.info(f"[DEBUG] Non-zero balances: {non_zero}")
             
             total_usdc = balance["total"].get("USDC", 0)
             free_usdc = balance["free"].get("USDC", 0)

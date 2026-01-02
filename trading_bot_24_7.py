@@ -224,7 +224,7 @@ class InstitutionalTradingBot:
                 "secret": API_SECRET,
                 "enableRateLimit": True,
                 "options": {
-                    "defaultType": "future" if leverage > 1 else "spot",
+                    "defaultType": "future",  # Always use futures wallet
                     "adjustForTimeDifference": True,  # Auto-sync dengan server time
                     "recvWindow": 60000,  # 60 detik tolerance untuk timestamp
                 },
